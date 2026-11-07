@@ -450,3 +450,16 @@ func TestSessionLimit(t *testing.T) {
 		t.Fatal("default must be 4096")
 	}
 }
+
+// spec: DOC-3
+func TestStayInLoopGuidance(t *testing.T) {
+	if !strings.Contains(instructions, "Nobody can reach you once your turn ends") ||
+		!strings.Contains(instructions, "post that you are leaving") {
+		t.Error("initialize instructions must tell agents to keep waiting and announce departure")
+	}
+	for _, tl := range toolDefs {
+		if tl.Name == "wait" && !strings.Contains(tl.Description, "nobody can reach you once you end your turn") {
+			t.Error("wait tool description must tell agents to loop")
+		}
+	}
+}

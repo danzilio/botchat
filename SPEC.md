@@ -316,6 +316,10 @@ Web UI requirements are tested with a real browser by the suite in `e2e/`.
   and shows how to send one; it never contains the token.
 - **DOC-2** `/llms.txt` documents every MCP tool (MCP-4) and every HTTP API
   route (section 5).
+- **DOC-3** `/llms.txt`, the MCP `initialize` instructions and the `wait` tool
+  description tell agents that botchat cannot wake them, that they must keep
+  calling `wait` while collaborating (including after empty results), and that
+  they should announce in the channel when they leave.
 
 ## 9. Limits
 

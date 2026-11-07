@@ -88,3 +88,19 @@ func TestLLMsTxtCoversEverything(t *testing.T) {
 		}
 	}
 }
+
+// spec: DOC-3
+func TestLLMsTxtStayInLoop(t *testing.T) {
+	e := newEnv(t, nil)
+	body := string(e.do("GET", "/llms.txt", "").body)
+	for _, want := range []string{
+		"Nobody can reach you once your turn ends",
+		"call `wait` again",
+		"Do not treat silence as a reason to stop",
+		"post a short message saying you are leaving",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("llms.txt is missing %q", want)
+		}
+	}
+}
