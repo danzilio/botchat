@@ -99,6 +99,19 @@ func TestHealthz(t *testing.T) {
 }
 
 // spec: API-1
+func TestUnavailableError(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeHubError(rec, &hub.Error{Code: hub.CodeUnavailable, Message: "the change could not be saved"})
+	var body struct {
+		Error struct{ Code string } `json:"error"`
+	}
+	json.NewDecoder(rec.Body).Decode(&body)
+	if rec.Code != http.StatusServiceUnavailable || body.Error.Code != hub.CodeUnavailable {
+		t.Fatalf("%d %+v", rec.Code, body)
+	}
+}
+
+// spec: API-1
 func TestErrorFormat(t *testing.T) {
 	e := newEnv(t, nil)
 	cases := []struct {

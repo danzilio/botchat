@@ -467,6 +467,173 @@ func TestSessionLimit(t *testing.T) {
 	}
 }
 
+// spec: MCP-10
+func TestSessionRecovery(t *testing.T) {
+	e := newEnv(t)
+	sid := e.initialize("?agent=alice")
+
+	// Simulate a restart: the session table is empty.
+	restarted := &Handler{Hub: e.hub, Version: "test"}
+	e.srv.Config.Handler = restarted
+
+	// A client that keeps its old session ID and ?agent= is still served.
+	r := e.raw("POST", "?agent=alice", sid, `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"post","arguments":{"channel":"general","text":"back"}}}`)
+	if r.status != 200 || r.resp.Error != nil {
+		t.Fatalf("recovered post: %d %s", r.status, r.body)
+	}
+	var c callResult
+	json.Unmarshal(r.resp.Result, &c)
+	if c.IsError || c.StructuredContent["from"] != "alice" {
+		t.Fatalf("identity not restored: %s", r.body)
+	}
+	// Later requests reuse the recovered session rather than creating more.
+	if r := e.raw("POST", "?agent=alice", sid, `{"jsonrpc":"2.0","id":8,"method":"ping"}`); r.status != 200 {
+		t.Fatalf("ping: %d", r.status)
+	}
+	if n := restarted.SessionCount(); n != 1 {
+		t.Fatalf("sessions: %d", n)
+	}
+
+	// The X-Botchat-Agent header works too.
+	if r := e.raw("POST", "", "cafe", `{"jsonrpc":"2.0","id":9,"method":"ping"}`, "X-Botchat-Agent", "bob"); r.status != 200 {
+		t.Fatalf("header recovery: %d %s", r.status, r.body)
+	}
+	// Without an agent name the client must re-initialize.
+	if r := e.rpc("deadbeef", "tools/list", nil); r.status != 404 {
+		t.Fatalf("anonymous unknown session: %d", r.status)
+	}
+	// Invalid agent names are not recovered.
+	if r := e.raw("POST", "?agent=bad%20name", "f00d", `{"jsonrpc":"2.0","id":9,"method":"ping"}`); r.status != 404 {
+		t.Fatalf("invalid agent: %d", r.status)
+	}
+}
+
+// spec: MCP-10
+func TestSessionRecoveryOnlyAfterRestart(t *testing.T) {
+	e := newEnv(t)
+	e.h.MaxSessions = 1
+	ping := `{"jsonrpc":"2.0","id":1,"method":"ping"}`
+
+	// A session this process terminated stays terminated.
+	deleted := e.initialize("?agent=alice")
+	if r := e.raw("DELETE", "", deleted, ""); r.status != 204 {
+		t.Fatalf("delete: %d", r.status)
+	}
+	if r := e.raw("POST", "?agent=alice", deleted, ping); r.status != 404 {
+		t.Fatalf("deleted session recovered: %d", r.status)
+	}
+
+	// So does one it evicted.
+	evicted := e.initialize("?agent=alice")
+	e.initialize("?agent=bob")
+	if r := e.raw("POST", "?agent=alice", evicted, ping); r.status != 404 {
+		t.Fatalf("evicted session recovered: %d", r.status)
+	}
+
+	// A recovered session is recovered only once: after this process
+	// terminates or evicts it, it stays gone.
+	if r := e.raw("POST", "?agent=alice", "old-1", ping); r.status != 200 {
+		t.Fatalf("recover: %d", r.status)
+	}
+	if r := e.raw("DELETE", "", "old-1", ""); r.status != 204 {
+		t.Fatalf("delete recovered: %d", r.status)
+	}
+	if r := e.raw("POST", "?agent=alice", "old-1", ping); r.status != 404 {
+		t.Fatalf("deleted recovered session came back: %d", r.status)
+	}
+	if r := e.raw("POST", "?agent=alice", "old-2", ping); r.status != 200 {
+		t.Fatalf("recover: %d", r.status)
+	}
+	e.initialize("?agent=bob") // evicts old-2 (MaxSessions = 1)
+	if r := e.raw("POST", "?agent=alice", "old-2", ping); r.status != 404 {
+		t.Fatalf("evicted recovered session came back: %d", r.status)
+	}
+}
+
+// spec: MCP-10
+func TestRecoveryLatchesOffWhenRetiredSetIsFull(t *testing.T) {
+	e := newEnv(t)
+	e.h.MaxSessions = 2
+	ping := `{"jsonrpc":"2.0","id":1,"method":"ping"}`
+	live := e.initialize("?agent=bob")
+
+	// Recover and terminate more sessions than the limit.
+	for _, id := range []string{"old-1", "old-2", "old-3"} {
+		if r := e.raw("POST", "?agent=alice", id, ping); r.status != 200 {
+			t.Fatalf("recover %s: %d", id, r.status)
+		}
+		if r := e.raw("DELETE", "", id, ""); r.status != 204 {
+			t.Fatalf("delete %s: %d", id, r.status)
+		}
+	}
+	// The oldest is never forgotten and resurrected; recovery is off instead.
+	for _, id := range []string{"old-1", "old-3", "old-new"} {
+		if r := e.raw("POST", "?agent=alice", id, ping); r.status != 404 {
+			t.Fatalf("%s recovered after latch: %d", id, r.status)
+		}
+	}
+	// Live sessions and initialize still work.
+	if r := e.rpc(live, "ping", nil); r.status != 200 {
+		t.Fatalf("live session: %d", r.status)
+	}
+	if r := e.rpc(e.initialize("?agent=carol"), "ping", nil); r.status != 200 {
+		t.Fatalf("new session: %d", r.status)
+	}
+}
+
+// spec: MCP-10
+func TestStaleRecoveryIsNotInserted(t *testing.T) {
+	e := newEnv(t)
+	ping := `{"jsonrpc":"2.0","id":1,"method":"ping"}`
+
+	// A recovery that passed its first check while a competing request
+	// recovered and then terminated the same ID must not insert it.
+	stale := &session{id: "old-1", agent: "alice", recovered: true}
+	e.h.mu.Lock()
+	admitted := e.h.recoverableLocked(stale.id)
+	e.h.mu.Unlock()
+	if !admitted {
+		t.Fatal("fresh ID should be recoverable")
+	}
+	if r := e.raw("POST", "?agent=alice", stale.id, ping); r.status != 200 {
+		t.Fatalf("competing recover: %d", r.status)
+	}
+	if r := e.raw("DELETE", "", stale.id, ""); r.status != 204 {
+		t.Fatalf("competing delete: %d", r.status)
+	}
+	if got := e.h.insertSession(stale); got != nil {
+		t.Fatal("stale recovery reinserted a terminated session")
+	}
+	if n := e.h.SessionCount(); n != 0 {
+		t.Fatalf("sessions: %d", n)
+	}
+}
+
+// spec: MCP-10
+func TestRecoveredSessionSeesMessagesSinceRestart(t *testing.T) {
+	e := newEnv(t)
+	sid := e.initialize("?agent=alice")
+
+	// Restart with a fresh hub: message IDs start over.
+	fresh := hub.New(hub.Options{})
+	t.Cleanup(fresh.Close)
+	e.srv.Config.Handler = &Handler{Hub: fresh, Version: "test"}
+
+	// Someone mentions alice before her client sends anything.
+	bob := e.initialize("?agent=bob")
+	e.ok(bob, "post", map[string]any{"channel": "general", "text": "@alice still there?"})
+
+	r := e.raw("POST", "?agent=alice", sid, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"wait","arguments":{"timeout_seconds":1}}}`)
+	if r.status != 200 || r.resp.Error != nil {
+		t.Fatalf("recovered wait: %d %s", r.status, r.body)
+	}
+	var c callResult
+	json.Unmarshal(r.resp.Result, &c)
+	if got := messageTexts(c.StructuredContent); !slices.Equal(got, []string{"@alice still there?"}) {
+		t.Fatalf("recovered wait missed messages: %v (%s)", got, r.body)
+	}
+}
+
 // spec: DOC-3
 func TestStayInLoopGuidance(t *testing.T) {
 	if !strings.Contains(instructions, "Nobody can reach you once your turn ends") ||
@@ -476,6 +643,15 @@ func TestStayInLoopGuidance(t *testing.T) {
 	for _, tl := range toolDefs {
 		if tl.Name == "wait" && !strings.Contains(tl.Description, "nobody can reach you once you end your turn") {
 			t.Error("wait tool description must tell agents to loop")
+		}
+	}
+}
+
+// spec: DOC-5
+func TestThreadsAndChannelsGuidance(t *testing.T) {
+	for _, want := range []string{"Stay in the channel your operator named", "Reply in a thread", "Create a channel only for a separate workstream"} {
+		if !strings.Contains(instructions, want) {
+			t.Errorf("initialize instructions are missing %q", want)
 		}
 	}
 }

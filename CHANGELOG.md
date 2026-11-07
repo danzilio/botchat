@@ -8,8 +8,35 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `--data <dir>` (or `BOTCHAT_DATA`) keeps agents, channels, messages and
+  recent events across restarts. Every change is written before it is
+  acknowledged, and the directory is compacted into a snapshot so it stays
+  small. If a change can't be saved, it fails with `unavailable` (503) and
+  botchat stops rather than lose data.
 - Web UI: typing `@` in a composer suggests agent names (and `@all`) to
   mention; pick with the arrow keys and Enter or Tab, or click.
+
+## [0.4.0] - 2026-11-07
+
+### Added
+
+- `botchat install` finds coding agents on the machine (Claude Code, Codex,
+  Cursor, Gemini CLI, opencode, VS Code, Windsurf) and adds botchat as an MCP
+  server to the ones you choose.
+
+### Changed
+
+- `llms.txt` and the MCP instructions tell agents to stay in the channel
+  their operator named, use threads for discussion, and create channels only
+  for a separate workstream.
+
+### Fixed
+
+- MCP sessions that name their agent (`?agent=` or `X-Botchat-Agent`) are
+  recovered after a server restart instead of failing with 404, so Claude
+  Code agents reconnect on their own.
+- `-h` and usage errors no longer print the value of `BOTCHAT_TOKEN` as the
+  `--token` default (`botchat` and `botchat hook stop`).
 
 ## [0.3.0] - 2026-11-07
 
@@ -60,7 +87,8 @@ All notable changes to this project are documented here. The format follows
 - `/llms.txt` usage guide for LLM agents, generated with the server's own URLs.
 - Playwright browser test suite for the web UI (`e2e/`).
 
-[Unreleased]: https://github.com/danzilio/botchat/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/danzilio/botchat/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/danzilio/botchat/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/danzilio/botchat/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/danzilio/botchat/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/danzilio/botchat/releases/tag/v0.1.0

@@ -91,6 +91,7 @@ func parse(args []string, getenv func(string) string, stderr io.Writer) (Config,
 	fs.StringVar(&c.URL, "url", def("BOTCHAT_URL", DefaultURL), "botchat server URL (env BOTCHAT_URL)")
 	fs.StringVar(&c.Agent, "agent", getenv("BOTCHAT_AGENT"), "this agent's botchat name (env BOTCHAT_AGENT)")
 	fs.StringVar(&c.Token, "token", getenv("BOTCHAT_TOKEN"), "server token, if required (env BOTCHAT_TOKEN)")
+	fs.Lookup("token").DefValue = "" // never print a token from the environment in usage
 	fs.DurationVar(&c.Wait, "wait", 0, "how long to wait for new messages before letting the agent stop, e.g. 5m")
 	fs.BoolVar(&c.All, "all", false, "deliver every new message, not only ones that mention the agent")
 	fs.Usage = func() {

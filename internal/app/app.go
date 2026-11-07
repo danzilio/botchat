@@ -19,8 +19,10 @@ import (
 
 	"github.com/danzilio/botchat/internal/hook"
 	"github.com/danzilio/botchat/internal/hub"
+	"github.com/danzilio/botchat/internal/install"
 	"github.com/danzilio/botchat/internal/mcp"
 	"github.com/danzilio/botchat/internal/server"
+	"github.com/danzilio/botchat/internal/store"
 	"github.com/danzilio/botchat/internal/web"
 )
 
@@ -35,8 +37,10 @@ type Config struct {
 	// Token was generated (CLI-9).
 	TokenGenerated bool
 	LogPath        string
-	MaxMessages    int
-	ShowVersion    bool
+	// DataDir, if set, makes state survive restarts (CLI-10).
+	DataDir     string
+	MaxMessages int
+	ShowVersion bool
 }
 
 // ErrHelp is returned by ParseConfig when -h/--help was requested.
@@ -49,11 +53,13 @@ func ParseConfig(args []string, getenv func(string) string, stderr io.Writer) (C
 	fs.SetOutput(stderr)
 	fs.StringVar(&c.Addr, "addr", envOr(getenv, "BOTCHAT_ADDR", DefaultAddr), "listen address (env BOTCHAT_ADDR)")
 	fs.StringVar(&c.Token, "token", getenv("BOTCHAT_TOKEN"), "shared secret required by the API and MCP (env BOTCHAT_TOKEN); with no value, generate one")
+	fs.Lookup("token").DefValue = "" // never print a token from the environment in usage
 	fs.StringVar(&c.LogPath, "log", "", "append every event as JSON lines to this file")
+	fs.StringVar(&c.DataDir, "data", getenv("BOTCHAT_DATA"), "keep state in this directory so it survives restarts (env BOTCHAT_DATA)")
 	fs.IntVar(&c.MaxMessages, "max-messages", 10000, "messages retained per channel")
 	fs.BoolVar(&c.ShowVersion, "version", false, "print version and exit")
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: botchat [flags]\n       botchat hook stop [flags]   (Stop hook for Claude Code / Codex)\n\nAn ephemeral, real-time chat server for AI agents.\n\nFlags:\n")
+		fmt.Fprintf(fs.Output(), "Usage: botchat [flags]\n       botchat install [flags]     (add botchat to your coding agents' MCP servers)\n       botchat hook stop [flags]   (Stop hook for Claude Code / Codex)\n\nAn ephemeral, real-time chat server for AI agents.\n\nFlags:\n")
 		fs.PrintDefaults()
 	}
 	args, generate := bareToken(fs, args)
@@ -115,6 +121,9 @@ func Main(ctx context.Context, args []string, getenv func(string) string, stdin 
 	if len(args) > 0 && args[0] == "hook" {
 		return hook.Main(ctx, args[1:], getenv, stdin, stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "install" {
+		return install.Main(ctx, args[1:], getenv, stdin, stdout, stderr)
+	}
 	cfg, err := ParseConfig(args, getenv, stderr)
 	if errors.Is(err, ErrHelp) {
 		return 0
@@ -136,8 +145,9 @@ func Main(ctx context.Context, args []string, getenv func(string) string, stdin 
 
 // Run starts the server and blocks until ctx is cancelled, then shuts down
 // gracefully (CLI-6). If ready is non-nil it is called with the bound address
-// once the server is accepting connections.
-func Run(ctx context.Context, cfg Config, version string, stdout io.Writer, ready func(addr string)) error {
+// once the server is accepting connections. With a data directory, it also
+// stops, returning an error, if changes can no longer be saved (PER-5).
+func Run(ctx context.Context, cfg Config, version string, stdout io.Writer, ready func(addr string)) (runErr error) {
 	opts := hub.Options{MaxMessagesPerChannel: cfg.MaxMessages}
 	if cfg.LogPath != "" {
 		f, err := os.OpenFile(cfg.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
@@ -147,7 +157,41 @@ func Run(ctx context.Context, cfg Config, version string, stdout io.Writer, read
 		defer f.Close()
 		opts.OnEvent = eventLogger(f)
 	}
-	h := hub.New(opts)
+	var (
+		st      *store.Store
+		state   *hub.State
+		records []hub.Record
+		failed  <-chan struct{} // nil, so never ready, without --data
+	)
+	if cfg.DataDir != "" {
+		var err error
+		st, state, records, err = store.Open(cfg.DataDir, store.Options{})
+		if err != nil {
+			return err
+		}
+		opts.Journal = st
+		failed = st.Failed()
+	}
+	h, err := hub.Restore(opts, state, records)
+	if err != nil {
+		if st != nil {
+			st.Close()
+		}
+		return fmt.Errorf("restore %s: %w", cfg.DataDir, err)
+	}
+	if st != nil {
+		if err := st.Start(h); err != nil {
+			st.Close()
+			return fmt.Errorf("data directory: %w", err)
+		}
+		// Runs after the HTTP server has shut down, so the final snapshot
+		// includes every change.
+		defer func() {
+			if err := st.Close(); err != nil && runErr == nil {
+				runErr = fmt.Errorf("saving state: %w", err)
+			}
+		}()
+	}
 
 	handler := server.New(server.Config{
 		Hub:     h,
@@ -170,7 +214,7 @@ func Run(ctx context.Context, cfg Config, version string, stdout io.Writer, read
 	if cfg.TokenGenerated {
 		shown = cfg.Token
 	}
-	printBanner(stdout, ln.Addr().String(), version, cfg.Token != "", shown)
+	printBanner(stdout, ln.Addr().String(), version, cfg.Token != "", shown, cfg.DataDir)
 
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
@@ -183,6 +227,8 @@ func Run(ctx context.Context, cfg Config, version string, stdout io.Writer, read
 		h.Close()
 		return err
 	case <-ctx.Done():
+	case <-failed:
+		runErr = fmt.Errorf("stopped because changes can no longer be saved: %w", st.Err())
 	}
 	h.Close() // ends SSE streams and waits
 	// In-flight requests are short once streams and waits have ended. Don't
@@ -193,7 +239,7 @@ func Run(ctx context.Context, cfg Config, version string, stdout io.Writer, read
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		srv.Close()
 	}
-	return nil
+	return runErr
 }
 
 func eventLogger(w io.Writer) func(hub.Event) {
@@ -208,7 +254,7 @@ func eventLogger(w io.Writer) func(hub.Event) {
 
 // printBanner prints the startup banner (CLI-5). shown is a generated token
 // to display (CLI-9); an explicitly configured token is never printed.
-func printBanner(w io.Writer, addr, version string, auth bool, shown string) {
+func printBanner(w io.Writer, addr, version string, auth bool, shown, dataDir string) {
 	host, port, _ := net.SplitHostPort(addr)
 	display := host
 	if ip := net.ParseIP(host); ip == nil || ip.IsUnspecified() {
@@ -233,6 +279,10 @@ func printBanner(w io.Writer, addr, version string, auth bool, shown string) {
 		}
 		fmt.Fprintf(&b, " --header 'Authorization: Bearer %s'", tok)
 	}
-	fmt.Fprintf(&b, "\n\nState is in memory only. Press Ctrl+C to stop.\n")
+	if dataDir != "" {
+		fmt.Fprintf(&b, "\n\nState is saved in %s. Press Ctrl+C to stop.\n", dataDir)
+	} else {
+		fmt.Fprintf(&b, "\n\nState is in memory only. Press Ctrl+C to stop.\n")
+	}
 	io.WriteString(w, b.String())
 }
