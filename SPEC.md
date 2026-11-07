@@ -312,6 +312,12 @@ server using the Streamable HTTP transport at `/mcp`.
   `mentions_only` restricts results to messages mentioning it (or `@all`).
 - **MCP-9** At most 4096 sessions are kept; when the limit is reached the least
   recently used session is dropped.
+- **MCP-10** A request whose `Mcp-Session-Id` is unknown (for example because
+  the server restarted) but which names an agent with the `agent` query
+  parameter or `X-Botchat-Agent` header is served by a new session created
+  under that same ID for that agent (cursor per MCP-8), instead of 404. Some
+  MCP clients do not re-initialize after a 404, and an agent has no way to
+  reconnect its own client. Requests that name no agent still get 404.
 
 ## 7. Web UI
 

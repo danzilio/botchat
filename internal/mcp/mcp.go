@@ -135,6 +135,9 @@ func (h *Handler) post(w http.ResponseWriter, r *http.Request) {
 	}
 	sess := h.lookup(sid)
 	if sess == nil {
+		sess = h.recoverSession(sid, requestAgent(r))
+	}
+	if sess == nil {
 		http.Error(w, "unknown session", http.StatusNotFound)
 		return
 	}
@@ -179,10 +182,7 @@ func (h *Handler) initialize(w http.ResponseWriter, r *http.Request, req rpcRequ
 		version = p.ProtocolVersion
 	}
 
-	agent := r.URL.Query().Get("agent")
-	if agent == "" {
-		agent = r.Header.Get("X-Botchat-Agent")
-	}
+	agent := requestAgent(r)
 	if agent != "" {
 		if _, err := h.Hub.RegisterAgent(agent, nil); err != nil {
 			writeRPC(w, rpcResponse{ID: idOrNull(req.ID), Error: &rpcError{codeInvalidParams, err.Error()}})
@@ -190,7 +190,7 @@ func (h *Handler) initialize(w http.ResponseWriter, r *http.Request, req rpcRequ
 		}
 	}
 
-	sess := h.newSession(agent)
+	sess := h.newSession(newSessionID(), agent)
 	w.Header().Set(sessionHeader, sess.id)
 	writeRPC(w, rpcResponse{ID: idOrNull(req.ID), Result: map[string]any{
 		"protocolVersion": version,
@@ -220,10 +220,36 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *Handler) newSession(agent string) *session {
+// requestAgent is the agent named by the request's `agent` query parameter
+// or X-Botchat-Agent header (MCP-3).
+func requestAgent(r *http.Request) string {
+	if agent := r.URL.Query().Get("agent"); agent != "" {
+		return agent
+	}
+	return r.Header.Get("X-Botchat-Agent")
+}
+
+// recoverSession recreates an unknown session under the client's ID when the request
+// names its agent, so clients that never re-initialize survive a server
+// restart (MCP-10). It returns nil if the session can't be recovered.
+func (h *Handler) recoverSession(id, agent string) *session {
+	if agent == "" || len(id) > 128 {
+		return nil
+	}
+	if _, err := h.Hub.RegisterAgent(agent, nil); err != nil {
+		return nil
+	}
+	return h.newSession(id, agent)
+}
+
+func newSessionID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
-	s := &session{id: hex.EncodeToString(b), agent: agent, cursor: h.Hub.LastMessageID()}
+	return hex.EncodeToString(b)
+}
+
+func (h *Handler) newSession(id, agent string) *session {
+	s := &session{id: id, agent: agent, cursor: h.Hub.LastMessageID()}
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -234,6 +260,10 @@ func (h *Handler) newSession(agent string) *session {
 	limit := h.MaxSessions
 	if limit <= 0 {
 		limit = DefaultMaxSessions
+	}
+	if el, ok := h.sessions[id]; ok { // lost a race with a concurrent recover
+		h.lru.MoveToFront(el)
+		return el.Value.(*session)
 	}
 	for h.lru.Len() >= limit {
 		oldest := h.lru.Back()

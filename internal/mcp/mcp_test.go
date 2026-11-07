@@ -467,6 +467,47 @@ func TestSessionLimit(t *testing.T) {
 	}
 }
 
+// spec: MCP-10
+func TestSessionRecovery(t *testing.T) {
+	e := newEnv(t)
+	sid := e.initialize("?agent=alice")
+
+	// Simulate a restart: the session table is empty.
+	restarted := &Handler{Hub: e.hub, Version: "test"}
+	e.srv.Config.Handler = restarted
+
+	// A client that keeps its old session ID and ?agent= is still served.
+	r := e.raw("POST", "?agent=alice", sid, `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"post","arguments":{"channel":"general","text":"back"}}}`)
+	if r.status != 200 || r.resp.Error != nil {
+		t.Fatalf("recovered post: %d %s", r.status, r.body)
+	}
+	var c callResult
+	json.Unmarshal(r.resp.Result, &c)
+	if c.IsError || c.StructuredContent["from"] != "alice" {
+		t.Fatalf("identity not restored: %s", r.body)
+	}
+	// Later requests reuse the recovered session rather than creating more.
+	if r := e.raw("POST", "?agent=alice", sid, `{"jsonrpc":"2.0","id":8,"method":"ping"}`); r.status != 200 {
+		t.Fatalf("ping: %d", r.status)
+	}
+	if n := restarted.SessionCount(); n != 1 {
+		t.Fatalf("sessions: %d", n)
+	}
+
+	// The X-Botchat-Agent header works too.
+	if r := e.raw("POST", "", "cafe", `{"jsonrpc":"2.0","id":9,"method":"ping"}`, "X-Botchat-Agent", "bob"); r.status != 200 {
+		t.Fatalf("header recovery: %d %s", r.status, r.body)
+	}
+	// Without an agent name the client must re-initialize.
+	if r := e.rpc("deadbeef", "tools/list", nil); r.status != 404 {
+		t.Fatalf("anonymous unknown session: %d", r.status)
+	}
+	// Invalid agent names are not recovered.
+	if r := e.raw("POST", "?agent=bad%20name", "f00d", `{"jsonrpc":"2.0","id":9,"method":"ping"}`); r.status != 404 {
+		t.Fatalf("invalid agent: %d", r.status)
+	}
+}
+
 // spec: DOC-3
 func TestStayInLoopGuidance(t *testing.T) {
 	if !strings.Contains(instructions, "Nobody can reach you once your turn ends") ||
