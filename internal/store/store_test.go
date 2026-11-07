@@ -19,14 +19,19 @@ func fixedNow() time.Time { return t0 }
 // open opens dir and restores a hub wired to it, as the app does.
 func open(t *testing.T, dir string, opts Options) (*Store, *hub.Hub) {
 	t.Helper()
+	return openAt(t, dir, opts, fixedNow)
+}
+
+func openAt(t *testing.T, dir string, opts Options, now func() time.Time) (*Store, *hub.Hub) {
+	t.Helper()
 	if opts.Logf == nil {
 		opts.Logf = t.Logf
 	}
-	s, st, events, err := Open(dir, opts)
+	s, st, records, err := Open(dir, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := hub.Restore(hub.Options{Now: fixedNow, OnEvent: s.Append}, st, events)
+	h, err := hub.Restore(hub.Options{Now: now, Journal: s}, st, records)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,16 +315,107 @@ func TestCompactionWithLeftoverOldLog(t *testing.T) {
 	}
 }
 
-func TestAppendAfterCloseIsDropped(t *testing.T) {
+func TestWritesAfterCloseFail(t *testing.T) {
 	dir := t.TempDir()
 	s, h := open(t, dir, Options{})
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	post(t, h, 1) // must not panic
+	if _, err := h.Post(hub.PostInput{Channel: "general", From: "bob", Text: "late"}); hub.ErrorCode(err) != hub.CodeUnavailable {
+		t.Fatalf("post after close: %v", err)
+	}
 	if err := s.Close(); err != nil {
 		t.Fatalf("second close: %v", err)
 	}
+}
+
+// spec: PER-2
+func TestRefreshSurvivesCrash(t *testing.T) {
+	dir := t.TempDir()
+	now := t0
+	clock := func() time.Time { return now }
+	s, h := openAt(t, dir, Options{}, clock)
+	if _, err := h.RegisterAgent("alice", map[string]string{"role": "lead"}); err != nil {
+		t.Fatal(err)
+	}
+	now = t0.Add(time.Minute)
+	if _, err := h.RegisterAgent("alice", map[string]string{"role": "lead"}); err != nil {
+		t.Fatal(err)
+	}
+	want := stateJSON(t, h)
+	s.crash()
+
+	s, h = openAt(t, dir, Options{}, clock)
+	defer s.Close()
+	if got := stateJSON(t, h); got != want {
+		t.Fatalf("got %s\nwant %s", got, want)
+	}
+	if a, _ := h.Agent("alice"); !a.LastSeen.Equal(t0.Add(time.Minute)) {
+		t.Fatalf("last_seen %v", a.LastSeen)
+	}
+}
+
+// spec: PER-5
+func TestWriteFailureIsNotAcknowledged(t *testing.T) {
+	dir := t.TempDir()
+	s, h := open(t, dir, Options{})
+	post(t, h, 2)
+	want := stateJSON(t, h)
+
+	s.mu.Lock()
+	s.f.Close() // every write now fails
+	s.mu.Unlock()
+	_, err := h.Post(hub.PostInput{Channel: "general", From: "bob", Text: "lost"})
+	if hub.ErrorCode(err) != hub.CodeUnavailable {
+		t.Fatalf("post with a failing log: %v", err)
+	}
+	select {
+	case <-s.Failed():
+	default:
+		t.Fatal("Failed should be closed")
+	}
+	if err := s.Compact(); err == nil {
+		t.Fatal("compaction after a failure must not snapshot unsaved changes")
+	}
+	if err := s.Close(); err == nil {
+		t.Fatal("Close should report the failure")
+	}
+
+	// After a restart, the state is that of the last saved change, and
+	// the journal has no gap.
+	s, h = open(t, dir, Options{})
+	if got := stateJSON(t, h); got != want {
+		t.Fatalf("got %s\nwant %s", got, want)
+	}
+	post(t, h, 1)
+	want = stateJSON(t, h)
+	s.crash()
+	s, h = open(t, dir, Options{})
+	defer s.Close()
+	if got := stateJSON(t, h); got != want {
+		t.Fatalf("after recovery: got %s\nwant %s", got, want)
+	}
+}
+
+// spec: PER-5
+func TestSyncFailureFailsTheStore(t *testing.T) {
+	s, h := open(t, t.TempDir(), Options{})
+	post(t, h, 1)
+	s.mu.Lock()
+	s.f.Close()
+	s.mu.Unlock()
+	if err := s.sync(); err == nil {
+		t.Fatal("sync of a closed file should fail")
+	}
+	select {
+	case <-s.Failed():
+	default:
+		t.Fatal("Failed should be closed")
+	}
+	if _, err := h.Post(hub.PostInput{Channel: "general", From: "bob", Text: "x"}); hub.ErrorCode(err) != hub.CodeUnavailable {
+		t.Fatalf("post after sync failure: %v", err)
+	}
+	s.Close()
 }
 
 // spec: PER-4

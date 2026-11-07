@@ -2,14 +2,18 @@
 // PER-*). It keeps two kinds of files:
 //
 //   - snapshot.json: a hub.State, replaced atomically (write, fsync, rename).
-//   - events.jsonl: every event emitted after the snapshot, one JSON object
-//     per line. During compaction the log is first renamed to
-//     events.jsonl.old, then a new snapshot is written, then the old log is
-//     removed. Loading reads all three and skips events the snapshot already
-//     covers, so a crash at any step loses nothing (PER-4).
+//   - events.jsonl: the journal since the snapshot, one JSON object per line:
+//     either an event, or {"touch":{...}} for activity that updated an
+//     agent's last_seen without an event. During compaction the log is first
+//     renamed to events.jsonl.old, then a new snapshot is written, then the
+//     old log is removed. Loading reads all three and skips what the snapshot
+//     already covers, so a crash at any step loses nothing (PER-4).
 //
-// Events are written before the hub returns (PER-2), so a process crash loses
-// nothing that was acknowledged; the log is fsynced on a timer.
+// Records are written before the hub acknowledges the change (PER-2) and the
+// log is fsynced on a timer. If a write or fsync fails, the store fails:
+// every later write returns the error, Failed is closed, and no snapshot is
+// written from then on, since the hub may hold a change that was never saved
+// (PER-5).
 package store
 
 import (
@@ -36,7 +40,7 @@ const (
 
 // Options configures a Store. Zero values select the defaults.
 type Options struct {
-	// CompactEvery is the number of logged events after which the log is
+	// CompactEvery is the number of journal records after which the log is
 	// folded into a new snapshot (PER-4). Default 10000.
 	CompactEvery int
 	// SyncInterval is how often the log is flushed to stable storage
@@ -51,18 +55,19 @@ type Source interface {
 	Snapshot(locked func(hub.State)) hub.State
 }
 
-// Store is an open data directory.
+// Store is an open data directory. It implements hub.Journal.
 type Store struct {
 	dir  string
 	opts Options
 
-	mu      sync.Mutex
-	f       *os.File
-	off     int64 // end of the last complete record in f
-	n       int   // events in f
-	dirty   bool  // written since the last fsync
-	closed  bool
-	lastErr string // last reported write error, to avoid log spam
+	mu     sync.Mutex
+	f      *os.File
+	off    int64 // end of the last complete record in f
+	n      int   // records in f
+	dirty  bool  // written since the last fsync
+	closed bool
+	err    error         // set once the store has failed (PER-5)
+	failed chan struct{} // closed when err is set
 
 	src  Source
 	kick chan struct{}
@@ -71,11 +76,20 @@ type Store struct {
 	cmu  sync.Mutex // serializes compactions
 }
 
+var errClosed = errors.New("data directory is closed")
+
+// line is the on-disk form of a journal record. An event line has the
+// event's own fields; a touch line has only "touch".
+type line struct {
+	hub.Event
+	Touch *hub.Touch `json:"touch,omitempty"`
+}
+
 // Open opens (creating if needed) the data directory dir and loads what it
-// holds. It returns the snapshot (nil if there is none) and the events logged
-// after it, for hub.Restore. A truncated final record is discarded; any other
-// unreadable data is an error (PER-3).
-func Open(dir string, opts Options) (*Store, *hub.State, []hub.Event, error) {
+// holds. It returns the snapshot (nil if there is none) and the journal
+// records written after it, for hub.Restore. A truncated final record is
+// discarded; any other unreadable data is an error (PER-3).
+func Open(dir string, opts Options) (*Store, *hub.State, []hub.Record, error) {
 	if opts.CompactEvery <= 0 {
 		opts.CompactEvery = 10000
 	}
@@ -88,7 +102,7 @@ func Open(dir string, opts Options) (*Store, *hub.State, []hub.Event, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, nil, nil, fmt.Errorf("data directory: %w", err)
 	}
-	s := &Store{dir: dir, opts: opts, kick: make(chan struct{}, 1)}
+	s := &Store{dir: dir, opts: opts, kick: make(chan struct{}, 1), failed: make(chan struct{})}
 
 	var st *hub.State
 	if b, err := os.ReadFile(s.path(snapshotFile)); err == nil {
@@ -100,9 +114,9 @@ func Open(dir string, opts Options) (*Store, *hub.State, []hub.Event, error) {
 		return nil, nil, nil, err
 	}
 
-	var events []hub.Event
+	var records []hub.Record
 	if f, err := os.Open(s.path(oldLogFile)); err == nil {
-		events, _, err = readLog(f, events)
+		records, _, err = readLog(f, records)
 		f.Close()
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("%s: %w", s.path(oldLogFile), err)
@@ -115,8 +129,8 @@ func Open(dir string, opts Options) (*Store, *hub.State, []hub.Event, error) {
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	before := len(events)
-	events, off, err := readLog(f, events)
+	before := len(records)
+	records, off, err := readLog(f, records)
 	if err != nil {
 		f.Close()
 		return nil, nil, nil, fmt.Errorf("%s: %w", s.path(logFile), err)
@@ -125,61 +139,75 @@ func Open(dir string, opts Options) (*Store, *hub.State, []hub.Event, error) {
 		f.Close()
 		return nil, nil, nil, err
 	}
-	s.f, s.off, s.n = f, off, len(events)-before
-	return s, st, events, nil
+	s.f, s.off, s.n = f, off, len(records)-before
+	return s, st, records, nil
 }
 
 func (s *Store) path(name string) string { return filepath.Join(s.dir, name) }
 
-// readLog appends the events in r to events. It returns the offset just past
-// the last complete line. A final line without a newline is a write cut short
-// by a crash and is ignored; a bad line anywhere else is an error.
-func readLog(r io.Reader, events []hub.Event) ([]hub.Event, int64, error) {
+// readLog appends the records in r to records. It returns the offset just
+// past the last complete line. A final line without a newline is a write cut
+// short by a crash and is ignored; a bad line anywhere else is an error.
+func readLog(r io.Reader, records []hub.Record) ([]hub.Record, int64, error) {
 	br := bufio.NewReader(r)
 	var off int64
-	for line := 1; ; line++ {
+	for n := 1; ; n++ {
 		b, err := br.ReadBytes('\n')
 		if errors.Is(err, io.EOF) {
-			return events, off, nil // b, if any, is a torn record
+			return records, off, nil // b, if any, is a torn record
 		}
 		if err != nil {
 			return nil, 0, err
 		}
 		if len(bytes.TrimSpace(b)) > 0 {
-			var e hub.Event
-			if err := json.Unmarshal(b, &e); err != nil {
-				return nil, 0, fmt.Errorf("line %d: %w", line, err)
+			var l line
+			if err := json.Unmarshal(b, &l); err != nil {
+				return nil, 0, fmt.Errorf("line %d: %w", n, err)
 			}
-			events = append(events, e)
+			switch {
+			case l.Touch != nil:
+				records = append(records, hub.Record{Touch: l.Touch})
+			case l.Type != "":
+				e := l.Event
+				records = append(records, hub.Record{Event: &e})
+			default:
+				return nil, 0, fmt.Errorf("line %d: neither an event nor a touch", n)
+			}
 		}
 		off += int64(len(b))
 	}
 }
 
-// Append writes e to the log. It is meant to be hub.Options.OnEvent and so is
-// called with the hub's lock held, in event order.
-func (s *Store) Append(e hub.Event) {
-	b, err := json.Marshal(e)
+// Event writes e to the log (hub.Journal).
+func (s *Store) Event(e hub.Event) error { return s.append(e) }
+
+// Touch writes t to the log (hub.Journal).
+func (s *Store) Touch(t hub.Touch) error {
+	return s.append(struct {
+		Touch *hub.Touch `json:"touch"`
+	}{&t})
+}
+
+func (s *Store) append(v any) error {
+	b, err := json.Marshal(v)
 	if err != nil {
-		s.opts.Logf("botchat: persist event %d: %v", e.Seq, err)
-		return
+		return err
 	}
 	b = append(b, '\n')
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.err != nil {
+		return s.err
+	}
 	if s.closed {
-		return
+		return errClosed
 	}
 	if _, err := s.f.WriteAt(b, s.off); err != nil {
-		// Cut off a partial record so later records stay readable.
+		// Cut off a partial record in case the disk recovers before a
+		// restart; the next start must still be able to read the log.
 		_ = s.f.Truncate(s.off)
-		if msg := err.Error(); msg != s.lastErr {
-			s.lastErr = msg
-			s.opts.Logf("botchat: persist event %d: %v", e.Seq, err)
-		}
-		return
+		return s.failLocked(fmt.Errorf("write %s: %w", s.path(logFile), err))
 	}
-	s.lastErr = ""
 	s.off += int64(len(b))
 	s.dirty = true
 	s.n++
@@ -189,6 +217,25 @@ func (s *Store) Append(e hub.Event) {
 		default:
 		}
 	}
+	return nil
+}
+
+func (s *Store) failLocked(err error) error {
+	if s.err == nil {
+		s.err = err
+		close(s.failed)
+	}
+	return s.err
+}
+
+// Failed is closed when the store can no longer save changes (PER-5).
+func (s *Store) Failed() <-chan struct{} { return s.failed }
+
+// Err returns why the store failed, or nil.
+func (s *Store) Err() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.err
 }
 
 // Start writes a fresh snapshot of src, so the directory is known to be
@@ -212,9 +259,7 @@ func (s *Store) loop() {
 		case <-s.stop:
 			return
 		case <-t.C:
-			if err := s.sync(); err != nil {
-				s.opts.Logf("botchat: sync %s: %v", s.path(logFile), err)
-			}
+			s.sync()
 		case <-s.kick:
 			if err := s.Compact(); err != nil {
 				s.opts.Logf("botchat: compact %s: %v", s.dir, err)
@@ -223,17 +268,24 @@ func (s *Store) loop() {
 	}
 }
 
+// sync flushes the log. A failed fsync may have lost acknowledged writes, so
+// it fails the store (PER-5).
 func (s *Store) sync() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || !s.dirty {
-		return nil
+	if s.closed || s.err != nil || !s.dirty {
+		return s.err
 	}
 	s.dirty = false
-	return s.f.Sync()
+	if err := s.f.Sync(); err != nil {
+		return s.failLocked(fmt.Errorf("sync %s: %w", s.path(logFile), err))
+	}
+	return nil
 }
 
-// Compact replaces the log with a snapshot of the source (PER-4).
+// Compact replaces the log with a snapshot of the source (PER-4). It does
+// nothing useful once the store has failed: the source may then hold a change
+// that was never saved, which must not reach the snapshot.
 func (s *Store) Compact() error {
 	s.cmu.Lock()
 	defer s.cmu.Unlock()
@@ -262,16 +314,19 @@ func (s *Store) Compact() error {
 }
 
 // rotateLocked moves the current log aside and starts an empty one. Every
-// event in the moved log is covered by the snapshot being taken. If an old
+// record in the moved log is covered by the snapshot being taken. If an old
 // log is still there (a previous compaction failed after rotating), it keeps
 // appending to the current log instead; loading skips what the snapshot
 // covers, so that is only a little wasteful.
 func (s *Store) rotateLocked() error {
+	if s.err != nil {
+		return s.err
+	}
 	if s.closed {
-		return errors.New("store is closed")
+		return errClosed
 	}
 	if err := s.f.Sync(); err != nil {
-		return err
+		return s.failLocked(fmt.Errorf("sync %s: %w", s.path(logFile), err))
 	}
 	s.dirty = false
 	s.n = 0
@@ -290,8 +345,7 @@ func (s *Store) rotateLocked() error {
 	if err != nil {
 		// Put the old log back so appends continue where they were.
 		if err2 := os.Rename(s.path(oldLogFile), s.path(logFile)); err2 != nil {
-			s.closed = true
-			return errors.Join(err, err2)
+			return s.failLocked(errors.Join(err, err2))
 		}
 		return s.reopenLocked(err)
 	}
@@ -300,25 +354,26 @@ func (s *Store) rotateLocked() error {
 	return nil
 }
 
-// reopenLocked reopens the log after a failed rotation and returns cause.
+// reopenLocked reopens the log after a failed rotation and returns cause. If
+// the log can't be reopened there is nowhere to write, so the store fails.
 func (s *Store) reopenLocked(cause error) error {
-	f, err := os.OpenFile(s.path(logFile), os.O_RDWR|os.O_CREATE, 0o600)
+	f, err := os.OpenFile(s.path(logFile), os.O_RDWR, 0o600)
 	if err != nil {
-		s.closed = true // nothing to append to
-		return errors.Join(cause, err)
+		return s.failLocked(errors.Join(cause, err))
 	}
 	s.f = f
 	return cause
 }
 
 // Close stops background work, writes a final snapshot so the next start is
-// fast, and closes the log. Events appended after Close are dropped.
+// fast (unless the store has failed), and closes the log. Writes after Close
+// return an error. Close returns the error the store failed with, if any.
 func (s *Store) Close() error {
 	s.mu.Lock()
 	closed := s.closed
 	s.mu.Unlock()
 	if closed {
-		return nil
+		return s.Err()
 	}
 	if s.stop != nil {
 		close(s.stop)
@@ -326,15 +381,16 @@ func (s *Store) Close() error {
 		s.stop = nil
 	}
 	var err error
-	if s.src != nil {
+	if s.src != nil && s.Err() == nil {
 		err = s.Compact()
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed {
-		return err
-	}
 	s.closed = true
+	if s.err != nil {
+		s.f.Close()
+		return s.err
+	}
 	return errors.Join(err, s.f.Sync(), s.f.Close())
 }
 

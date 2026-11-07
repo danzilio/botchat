@@ -84,6 +84,8 @@ type Event struct {
 const (
 	CodeInvalid  = "invalid_argument"
 	CodeNotFound = "not_found"
+	// CodeUnavailable means a change could not be saved (PER-5).
+	CodeUnavailable = "unavailable"
 )
 
 // Error is a typed hub error. Use errors.As to inspect it.

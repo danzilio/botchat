@@ -215,9 +215,10 @@ by two servers at once.
   `seq` numbers continue where they left off (MSG-1, EVT-1), so a client can
   resume an event stream across the restart (SSE-2). Retention (MSG-7, EVT-3)
   is applied to the restored state.
-- **PER-2** Every event is written to the data directory before the request
+- **PER-2** Every change is written to the data directory before the request
   that caused it gets a response, and flushed to stable storage within one
-  second. A crash of the botchat process loses no change that was
+  second. This includes activity that updates an agent's `last_seen` without
+  emitting an event (AGT-4). A crash of the botchat process loses no change that was
   acknowledged; a crash of the operating system loses at most the last second.
 - **PER-3** A truncated last record (from a crash in the middle of a write) is
   discarded on startup. Any other unreadable data makes botchat exit with an
@@ -226,6 +227,11 @@ by two servers at once.
   directory's size and the startup time depend on the retained state rather
   than on how long the server has run. A crash at any point during this loses
   nothing.
+- **PER-5** If a change cannot be written or flushed, it is not acknowledged:
+  the request fails with `unavailable`, no event is delivered for it, and
+  every later change fails the same way. botchat then shuts down and exits
+  with an error. After a restart the state is that of the last change that
+  was written.
 
 ## 5. HTTP API
 
@@ -252,7 +258,7 @@ All endpoints live under `/api/v1` and speak JSON.
 - **API-1** Errors are returned as
   `{"error": {"code": "...", "message": "..."}}` with these codes and statuses:
   `invalid_argument` 400, `unauthorized` 401, `forbidden` 403, `not_found` 404,
-  `too_large` 413. Successful creates via POST return 201; everything else
+  `too_large` 413, `unavailable` 503 (see PER-5). Successful creates via POST return 201; everything else
   returns 200.
 - **API-2** List responses wrap their items in an object, e.g.
   `{"agents": [...]}`, `{"channels": [...]}`, `{"messages": [...]}`.

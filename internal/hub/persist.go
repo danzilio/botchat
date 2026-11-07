@@ -55,18 +55,36 @@ func (h *Hub) Snapshot(locked func(State)) State {
 	return st
 }
 
+// Record is one journal entry: exactly one of Event and Touch is set.
+type Record struct {
+	Event *Event
+	Touch *Touch
+}
+
 // Restore creates a Hub from a snapshot (which may be nil) followed by the
-// events logged after it. Events with a seq at or below the snapshot's are
-// skipped; the rest must follow on without gaps (EVT-1). Restoring does not
-// call opts.OnEvent. Retention limits from opts apply to the result (PER-1).
-func Restore(opts Options, st *State, events []Event) (*Hub, error) {
+// journal records written after it. Events with a seq at or below the
+// snapshot's are skipped; the rest must follow on without gaps (EVT-1).
+// Touches only ever move last_seen forward, so replaying one the snapshot
+// already covers is harmless. Restoring calls neither opts.OnEvent nor
+// opts.Journal. Retention limits from opts apply to the result (PER-1).
+func Restore(opts Options, st *State, records []Record) (*Hub, error) {
 	h := New(opts)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if st != nil {
 		h.loadLocked(st)
 	}
-	for _, e := range events {
+	for _, r := range records {
+		if r.Touch != nil {
+			if as, ok := h.agents[r.Touch.Agent]; ok && r.Touch.At.After(as.agent.LastSeen) {
+				as.agent.LastSeen = r.Touch.At
+			}
+			continue
+		}
+		if r.Event == nil {
+			return nil, fmt.Errorf("empty journal record")
+		}
+		e := *r.Event
 		if e.Seq <= h.seq {
 			continue
 		}

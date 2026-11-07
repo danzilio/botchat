@@ -140,38 +140,34 @@ func Main(ctx context.Context, args []string, getenv func(string) string, stdin 
 
 // Run starts the server and blocks until ctx is cancelled, then shuts down
 // gracefully (CLI-6). If ready is non-nil it is called with the bound address
-// once the server is accepting connections.
-func Run(ctx context.Context, cfg Config, version string, stdout io.Writer, ready func(addr string)) error {
+// once the server is accepting connections. With a data directory, it also
+// stops, returning an error, if changes can no longer be saved (PER-5).
+func Run(ctx context.Context, cfg Config, version string, stdout io.Writer, ready func(addr string)) (runErr error) {
 	opts := hub.Options{MaxMessagesPerChannel: cfg.MaxMessages}
-	var sinks []func(hub.Event)
 	if cfg.LogPath != "" {
 		f, err := os.OpenFile(cfg.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 		if err != nil {
 			return fmt.Errorf("open log: %w", err)
 		}
 		defer f.Close()
-		sinks = append(sinks, eventLogger(f))
+		opts.OnEvent = eventLogger(f)
 	}
 	var (
-		st     *store.Store
-		state  *hub.State
-		events []hub.Event
+		st      *store.Store
+		state   *hub.State
+		records []hub.Record
+		failed  <-chan struct{} // nil, so never ready, without --data
 	)
 	if cfg.DataDir != "" {
 		var err error
-		st, state, events, err = store.Open(cfg.DataDir, store.Options{})
+		st, state, records, err = store.Open(cfg.DataDir, store.Options{})
 		if err != nil {
 			return err
 		}
-		sinks = append(sinks, st.Append)
+		opts.Journal = st
+		failed = st.Failed()
 	}
-	switch len(sinks) {
-	case 1:
-		opts.OnEvent = sinks[0]
-	case 2:
-		opts.OnEvent = func(e hub.Event) { sinks[0](e); sinks[1](e) }
-	}
-	h, err := hub.Restore(opts, state, events)
+	h, err := hub.Restore(opts, state, records)
 	if err != nil {
 		if st != nil {
 			st.Close()
@@ -186,8 +182,8 @@ func Run(ctx context.Context, cfg Config, version string, stdout io.Writer, read
 		// Runs after the HTTP server has shut down, so the final snapshot
 		// includes every change.
 		defer func() {
-			if err := st.Close(); err != nil {
-				fmt.Fprintln(stdout, "botchat: saving state:", err)
+			if err := st.Close(); err != nil && runErr == nil {
+				runErr = fmt.Errorf("saving state: %w", err)
 			}
 		}()
 	}
@@ -226,6 +222,8 @@ func Run(ctx context.Context, cfg Config, version string, stdout io.Writer, read
 		h.Close()
 		return err
 	case <-ctx.Done():
+	case <-failed:
+		runErr = fmt.Errorf("stopped because changes can no longer be saved: %w", st.Err())
 	}
 	h.Close() // ends SSE streams and waits
 	// In-flight requests are short once streams and waits have ended. Don't
@@ -236,7 +234,7 @@ func Run(ctx context.Context, cfg Config, version string, stdout io.Writer, read
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		srv.Close()
 	}
-	return nil
+	return runErr
 }
 
 func eventLogger(w io.Writer) func(hub.Event) {

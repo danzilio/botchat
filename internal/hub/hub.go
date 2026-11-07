@@ -30,6 +30,26 @@ type Options struct {
 	// OnEvent, if set, is called synchronously for every event, in order,
 	// while the hub's lock is held. It MUST NOT call back into the hub.
 	OnEvent func(Event)
+	// Journal, if set, makes changes durable (PER-2). If it fails, the
+	// change is not acknowledged and the hub rejects all later changes
+	// (PER-5).
+	Journal Journal
+}
+
+// Journal records every change to the hub, in order. Its methods are called
+// while the hub's lock is held and MUST NOT call back into the hub.
+type Journal interface {
+	// Event records an event before it is delivered.
+	Event(Event) error
+	// Touch records activity that updated an agent's last_seen without an
+	// event (AGT-4).
+	Touch(Touch) error
+}
+
+// Touch is activity by an existing agent that emits no event.
+type Touch struct {
+	Agent string    `json:"agent"`
+	At    time.Time `json:"at"`
 }
 
 // Hub is the central in-memory state.
@@ -46,6 +66,7 @@ type Hub struct {
 	messages  map[uint64]*Message
 	history   []Event
 	subs      map[*Subscription]struct{}
+	failed    error // set when the journal fails (PER-5)
 }
 
 type agentState struct {
@@ -110,9 +131,18 @@ func (h *Hub) Done() <-chan struct{} { return h.done }
 // ---- events ----
 
 func (h *Hub) emitLocked(e Event) {
+	if h.failed != nil {
+		return
+	}
 	h.seq++
 	e.Seq = h.seq
 	e.At = h.now()
+	if h.opts.Journal != nil {
+		if err := h.opts.Journal.Event(e); err != nil {
+			h.failLocked(err)
+			return // not delivered: it was never saved
+		}
+	}
 	h.history = append(h.history, e)
 	h.trimHistoryLocked()
 	if h.opts.OnEvent != nil {
@@ -128,6 +158,32 @@ func (h *Hub) emitLocked(e Event) {
 			s.closeLocked() // EVT-5: slow consumer
 		}
 	}
+}
+
+// seenLocked records activity by an existing agent (AGT-4).
+func (h *Hub) seenLocked(as *agentState) {
+	if h.failed != nil {
+		return
+	}
+	now := h.now()
+	as.agent.LastSeen = now
+	if h.opts.Journal != nil {
+		if err := h.opts.Journal.Touch(Touch{Agent: as.agent.Name, At: now}); err != nil {
+			h.failLocked(err)
+		}
+	}
+}
+
+func (h *Hub) failLocked(err error) {
+	h.failed = &Error{Code: CodeUnavailable, Message: "the change could not be saved: " + err.Error()}
+}
+
+// Err returns the error that made the hub stop accepting changes, if any
+// (PER-5).
+func (h *Hub) Err() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.failed
 }
 
 // LastSeq returns the sequence number of the most recent event.
@@ -162,7 +218,7 @@ func (h *Hub) touchLocked(name string) *agentState {
 		h.emitLocked(Event{Type: EventAgentJoined, Agent: h.agentSnapshotLocked(as)})
 		return as
 	}
-	as.agent.LastSeen = now
+	h.seenLocked(as)
 	return as
 }
 
@@ -177,6 +233,9 @@ func (h *Hub) RegisterAgent(name string, meta map[string]string) (Agent, error) 
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.failed != nil {
+		return Agent{}, h.failed
+	}
 	as, existed := h.agents[name]
 	if !existed {
 		now := h.now()
@@ -186,15 +245,21 @@ func (h *Hub) RegisterAgent(name string, meta map[string]string) (Agent, error) 
 		}
 		h.agents[name] = as
 		h.emitLocked(Event{Type: EventAgentJoined, Agent: h.agentSnapshotLocked(as)})
+		if h.failed != nil {
+			return Agent{}, h.failed
+		}
 		return *h.agentSnapshotLocked(as), nil
 	}
-	as.agent.LastSeen = h.now()
+	h.seenLocked(as)
 	if meta != nil && !maps.Equal(meta, as.agent.Meta) {
 		as.agent.Meta = nil
 		if len(meta) > 0 {
 			as.agent.Meta = maps.Clone(meta)
 		}
 		h.emitLocked(Event{Type: EventAgentUpdated, Agent: h.agentSnapshotLocked(as)})
+	}
+	if h.failed != nil {
+		return Agent{}, h.failed
 	}
 	return *h.agentSnapshotLocked(as), nil
 }
@@ -206,8 +271,11 @@ func (h *Hub) Touch(name string) error {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.failed != nil {
+		return h.failed
+	}
 	h.touchLocked(name)
-	return nil
+	return h.failed
 }
 
 // StreamOpened marks an open stream for name (SSE-4). Pair with StreamClosed.
@@ -217,8 +285,11 @@ func (h *Hub) StreamOpened(name string) error {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.failed != nil {
+		return h.failed
+	}
 	h.touchLocked(name).streams++
-	return nil
+	return h.failed
 }
 
 // StreamClosed is the counterpart of StreamOpened.
@@ -227,7 +298,7 @@ func (h *Hub) StreamClosed(name string) {
 	defer h.mu.Unlock()
 	if as, ok := h.agents[name]; ok && as.streams > 0 {
 		as.streams--
-		as.agent.LastSeen = h.now()
+		h.seenLocked(as)
 	}
 }
 
@@ -286,6 +357,9 @@ func (h *Hub) CreateChannel(name string, topic *string) (Channel, error) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.failed != nil {
+		return Channel{}, h.failed
+	}
 	cs, existed := h.channels[name]
 	if !existed {
 		cs = &channelState{ch: Channel{Name: name, CreatedAt: h.now()}}
@@ -297,6 +371,9 @@ func (h *Hub) CreateChannel(name string, topic *string) (Channel, error) {
 	} else if topic != nil && *topic != cs.ch.Topic {
 		cs.ch.Topic = *topic
 		h.emitLocked(Event{Type: EventChannelUpdated, Channel: cs.snapshot()})
+	}
+	if h.failed != nil {
+		return Channel{}, h.failed
 	}
 	return *cs.snapshot(), nil
 }
@@ -353,6 +430,9 @@ func (h *Hub) Post(in PostInput) (Message, error) {
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.failed != nil {
+		return Message{}, h.failed
+	}
 
 	var root *Message
 	if in.ThreadID != 0 {
@@ -394,6 +474,9 @@ func (h *Hub) Post(in PostInput) (Message, error) {
 	cs.msgs = append(cs.msgs, m.ID)
 	h.evictLocked(cs)
 	h.emitLocked(Event{Type: EventMessageCreated, Message: m.clone()})
+	if h.failed != nil {
+		return Message{}, h.failed
+	}
 	return *m.clone(), nil
 }
 
@@ -484,6 +567,9 @@ func (h *Hub) React(id uint64, from, emoji string, add bool) (Message, error) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.failed != nil {
+		return Message{}, h.failed
+	}
 	m, ok := h.messages[id]
 	if !ok {
 		return Message{}, notFound("message %d not found", id)
@@ -511,6 +597,9 @@ func (h *Hub) React(id uint64, from, emoji string, add bool) (Message, error) {
 		}
 		h.emitLocked(Event{Type: EventReactionRemoved, Message: m.clone(),
 			Reaction: &Reaction{MessageID: id, Emoji: emoji, From: from}})
+	}
+	if h.failed != nil {
+		return Message{}, h.failed
 	}
 	return *m.clone(), nil
 }
