@@ -42,9 +42,9 @@ type Env struct {
 	Home      string // user home directory
 	ConfigDir string // os.UserConfigDir
 	LookPath  func(file string) (string, error)
-	// Run executes a program and returns its combined output. A non-nil error
-	// means it could not be started or exited non-zero.
-	Run    func(ctx context.Context, path string, args ...string) (string, error)
+	// Run executes a program in dir and returns its combined output. A
+	// non-nil error means it could not be started or exited non-zero.
+	Run    func(ctx context.Context, dir, path string, args ...string) (string, error)
 	Stdin  io.Reader
 	Stdout io.Writer
 	Stderr io.Writer
@@ -58,8 +58,10 @@ func SystemEnv(stdin io.Reader, stdout, stderr io.Writer) Env {
 		Home:      home,
 		ConfigDir: cfg,
 		LookPath:  exec.LookPath,
-		Run: func(ctx context.Context, path string, args ...string) (string, error) {
-			out, err := exec.CommandContext(ctx, path, args...).CombinedOutput()
+		Run: func(ctx context.Context, dir, path string, args ...string) (string, error) {
+			cmd := exec.CommandContext(ctx, path, args...)
+			cmd.Dir = dir
+			out, err := cmd.CombinedOutput()
 			return string(out), err
 		},
 		Stdin:  stdin,

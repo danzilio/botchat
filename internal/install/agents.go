@@ -172,7 +172,7 @@ func (a *agent) has(ctx context.Context, env Env) (bool, error) {
 		if err != nil {
 			return false, nil
 		}
-		_, err = env.Run(ctx, path, a.cli.get...)
+		_, err = runNeutral(ctx, env, path, a.cli.get...)
 		return err == nil, nil
 	}
 	obj, err := readObject(a.file.path(env))
@@ -210,10 +210,10 @@ func (a *agent) install(ctx context.Context, env Env, cfg Config, replace bool) 
 		if replace {
 			// The entry may live in another scope; adding still works, so
 			// a failed remove is not fatal.
-			_, _ = env.Run(ctx, path, a.cli.remove...)
+			_, _ = runNeutral(ctx, env, path, a.cli.remove...)
 		}
 		args := a.cli.add(cfg)
-		if out, err := env.Run(ctx, path, args...); err != nil {
+		if out, err := runNeutral(ctx, env, path, args...); err != nil {
 			return "", fmt.Errorf("%s: %v\n%s", cmdline(a.cli.bin, args), err, strings.TrimSpace(out))
 		}
 		verb := "added"
@@ -350,6 +350,19 @@ func writeFileAtomic(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// runNeutral runs an agent CLI from a fresh, empty directory. Agent CLIs
+// also read project- and local-scoped config based on the working
+// directory; from an empty one they see only the user-level config this
+// installer manages (INS-5).
+func runNeutral(ctx context.Context, env Env, path string, args ...string) (string, error) {
+	dir, err := os.MkdirTemp("", "botchat-install-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(dir)
+	return env.Run(ctx, dir, path, args...)
 }
 
 // resolveLinks follows symlinks at path, including dangling ones, so the

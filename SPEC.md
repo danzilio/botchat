@@ -139,9 +139,10 @@ use it.
   modified; that agent fails with an error that shows the entry to add by
   hand. Files are replaced atomically, and a symlinked config file (even a
   dangling one) is written through to its target, never replaced.
-- **INS-5** An agent that already has a `botchat` server is left unchanged
-  and reported as such, unless `--force` is given, in which case the entry is
-  replaced.
+- **INS-5** An agent that already has a user-level `botchat` server is left
+  unchanged and reported as such, unless `--force` is given, in which case
+  the entry is replaced. Project- or local-scoped entries don't count and
+  are never modified: agent CLIs are run from an empty temporary directory.
 - **INS-6** `--dry-run` prints what would be run or written for each
   selected agent and changes nothing.
 - **INS-7** It reports the outcome for each selected agent and exits 1 if

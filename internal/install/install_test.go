@@ -18,21 +18,24 @@ type fakeMachine struct {
 	t         *testing.T
 	home, cfg string
 	bins      map[string]bool
-	servers   map[string]bool // CLI agents that already have botchat
-	failAdd   map[string]bool
-	calls     []string
+	servers   map[string]bool // CLI agents that already have botchat at user level
+	// CLI agents with a project- or local-scoped botchat entry only
+	projectOnly map[string]bool
+	failAdd     map[string]bool
+	calls       []string
 }
 
 func newMachine(t *testing.T, bins ...string) *fakeMachine {
 	t.Helper()
 	root := t.TempDir()
 	m := &fakeMachine{
-		t:       t,
-		home:    filepath.Join(root, "home"),
-		cfg:     filepath.Join(root, "config"),
-		bins:    map[string]bool{},
-		servers: map[string]bool{},
-		failAdd: map[string]bool{},
+		t:           t,
+		home:        filepath.Join(root, "home"),
+		cfg:         filepath.Join(root, "config"),
+		bins:        map[string]bool{},
+		servers:     map[string]bool{},
+		projectOnly: map[string]bool{},
+		failAdd:     map[string]bool{},
 	}
 	for _, b := range bins {
 		m.bins[b] = true
@@ -50,13 +53,17 @@ func (m *fakeMachine) env(stdin string, stdout *bytes.Buffer) Env {
 			}
 			return "", errors.New("not found")
 		},
-		Run: func(_ context.Context, path string, args ...string) (string, error) {
+		Run: func(_ context.Context, dir, path string, args ...string) (string, error) {
 			bin := filepath.Base(path)
 			m.calls = append(m.calls, cmdline(bin, args))
 			switch args[1] {
 			case "get":
 				if m.servers[bin] {
 					return "botchat", nil
+				}
+				// Project/local entries are only visible from a project dir.
+				if entries, err := os.ReadDir(dir); m.projectOnly[bin] && (dir == "" || err != nil || len(entries) > 0) {
+					return "botchat (local)", nil
 				}
 				return "not found", errors.New("exit status 1")
 			case "remove":
@@ -414,6 +421,20 @@ func TestExistingEntry(t *testing.T) {
 	}
 	if !strings.Contains(out, "replaced") {
 		t.Errorf("output: %s", out)
+	}
+}
+
+// spec: INS-5
+func TestProjectScopedEntryIgnored(t *testing.T) {
+	m := newMachine(t, "claude", "codex")
+	m.projectOnly["claude"] = true
+	m.projectOnly["codex"] = true
+	code, out := m.run("", nil, "--agents", "all")
+	if code != 0 || strings.Contains(out, "already installed") {
+		t.Fatalf("exit %d: %s", code, out)
+	}
+	if !m.servers["claude"] || !m.servers["codex"] {
+		t.Errorf("user-level entries not added: %v\n%s", m.servers, out)
 	}
 }
 
