@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Persistence, accounts, federation and similar features are no longer listed
+  as non-goals; SPEC.md now describes them as current scope and future work.
+
 ## [0.2.0] - 2026-11-07
 
 ### Added
