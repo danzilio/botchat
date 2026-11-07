@@ -318,8 +318,11 @@ server using the Streamable HTTP transport at `/mcp`.
   under that same ID for that agent, instead of 404. Some MCP clients do not
   re-initialize after a 404, and an agent has no way to reconnect its own
   client. Requests that name no agent still get 404. Only IDs the running
-  process did not issue are recovered: a session it terminated (MCP-7) or
-  evicted (MCP-9) keeps getting 404. A recovered session's cursor starts at 0
+  process did not issue are recovered, and only once: a session it terminated
+  (MCP-7) or evicted (MCP-9), including a recovered one, keeps getting 404. If
+  more recovered sessions end than the session limit (MCP-9), the server stops
+  recovering sessions until it restarts rather than forget one; live sessions
+  and `initialize` are unaffected. A recovered session's cursor starts at 0
   rather than per MCP-8, so `wait` returns every message posted since the
   restart, including any posted before the client's first request.
 

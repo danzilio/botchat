@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -528,6 +529,79 @@ func TestSessionRecoveryOnlyAfterRestart(t *testing.T) {
 	e.initialize("?agent=bob")
 	if r := e.raw("POST", "?agent=alice", evicted, ping); r.status != 404 {
 		t.Fatalf("evicted session recovered: %d", r.status)
+	}
+
+	// A recovered session is recovered only once: after this process
+	// terminates or evicts it, it stays gone.
+	if r := e.raw("POST", "?agent=alice", "old-1", ping); r.status != 200 {
+		t.Fatalf("recover: %d", r.status)
+	}
+	if r := e.raw("DELETE", "", "old-1", ""); r.status != 204 {
+		t.Fatalf("delete recovered: %d", r.status)
+	}
+	if r := e.raw("POST", "?agent=alice", "old-1", ping); r.status != 404 {
+		t.Fatalf("deleted recovered session came back: %d", r.status)
+	}
+	if r := e.raw("POST", "?agent=alice", "old-2", ping); r.status != 200 {
+		t.Fatalf("recover: %d", r.status)
+	}
+	e.initialize("?agent=bob") // evicts old-2 (MaxSessions = 1)
+	if r := e.raw("POST", "?agent=alice", "old-2", ping); r.status != 404 {
+		t.Fatalf("evicted recovered session came back: %d", r.status)
+	}
+}
+
+// spec: MCP-10
+func TestRecoveryLatchesOffWhenRetiredSetIsFull(t *testing.T) {
+	e := newEnv(t)
+	e.h.MaxSessions = 2
+	ping := `{"jsonrpc":"2.0","id":1,"method":"ping"}`
+	live := e.initialize("?agent=bob")
+
+	// Recover and terminate more sessions than the limit.
+	for _, id := range []string{"old-1", "old-2", "old-3"} {
+		if r := e.raw("POST", "?agent=alice", id, ping); r.status != 200 {
+			t.Fatalf("recover %s: %d", id, r.status)
+		}
+		if r := e.raw("DELETE", "", id, ""); r.status != 204 {
+			t.Fatalf("delete %s: %d", id, r.status)
+		}
+	}
+	// The oldest is never forgotten and resurrected; recovery is off instead.
+	for _, id := range []string{"old-1", "old-3", "old-new"} {
+		if r := e.raw("POST", "?agent=alice", id, ping); r.status != 404 {
+			t.Fatalf("%s recovered after latch: %d", id, r.status)
+		}
+	}
+	// Live sessions and initialize still work.
+	if r := e.rpc(live, "ping", nil); r.status != 200 {
+		t.Fatalf("live session: %d", r.status)
+	}
+	if r := e.rpc(e.initialize("?agent=carol"), "ping", nil); r.status != 200 {
+		t.Fatalf("new session: %d", r.status)
+	}
+}
+
+// spec: MCP-10
+func TestConcurrentRecoverAndDelete(t *testing.T) {
+	e := newEnv(t)
+	ping := `{"jsonrpc":"2.0","id":1,"method":"ping"}`
+	for i := range 50 {
+		id := fmt.Sprintf("old-%d", i)
+		if r := e.raw("POST", "?agent=alice", id, ping); r.status != 200 {
+			t.Fatalf("recover: %d", r.status)
+		}
+		var wg sync.WaitGroup
+		for range 4 {
+			wg.Add(2)
+			go func() { defer wg.Done(); e.raw("POST", "?agent=alice", id, ping) }()
+			go func() { defer wg.Done(); e.raw("DELETE", "", id, "") }()
+		}
+		wg.Wait()
+		e.raw("DELETE", "", id, "")
+		if r := e.raw("POST", "?agent=alice", id, ping); r.status != 404 {
+			t.Fatalf("%s reinserted after delete: %d", id, r.status)
+		}
 	}
 }
 
