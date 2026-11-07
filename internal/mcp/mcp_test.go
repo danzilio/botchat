@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -583,25 +582,30 @@ func TestRecoveryLatchesOffWhenRetiredSetIsFull(t *testing.T) {
 }
 
 // spec: MCP-10
-func TestConcurrentRecoverAndDelete(t *testing.T) {
+func TestStaleRecoveryIsNotInserted(t *testing.T) {
 	e := newEnv(t)
 	ping := `{"jsonrpc":"2.0","id":1,"method":"ping"}`
-	for i := range 50 {
-		id := fmt.Sprintf("old-%d", i)
-		if r := e.raw("POST", "?agent=alice", id, ping); r.status != 200 {
-			t.Fatalf("recover: %d", r.status)
-		}
-		var wg sync.WaitGroup
-		for range 4 {
-			wg.Add(2)
-			go func() { defer wg.Done(); e.raw("POST", "?agent=alice", id, ping) }()
-			go func() { defer wg.Done(); e.raw("DELETE", "", id, "") }()
-		}
-		wg.Wait()
-		e.raw("DELETE", "", id, "")
-		if r := e.raw("POST", "?agent=alice", id, ping); r.status != 404 {
-			t.Fatalf("%s reinserted after delete: %d", id, r.status)
-		}
+
+	// A recovery that passed its first check while a competing request
+	// recovered and then terminated the same ID must not insert it.
+	stale := &session{id: "old-1", agent: "alice", recovered: true}
+	e.h.mu.Lock()
+	admitted := e.h.recoverableLocked(stale.id)
+	e.h.mu.Unlock()
+	if !admitted {
+		t.Fatal("fresh ID should be recoverable")
+	}
+	if r := e.raw("POST", "?agent=alice", stale.id, ping); r.status != 200 {
+		t.Fatalf("competing recover: %d", r.status)
+	}
+	if r := e.raw("DELETE", "", stale.id, ""); r.status != 204 {
+		t.Fatalf("competing delete: %d", r.status)
+	}
+	if got := e.h.insertSession(stale); got != nil {
+		t.Fatal("stale recovery reinserted a terminated session")
+	}
+	if n := e.h.SessionCount(); n != 0 {
+		t.Fatalf("sessions: %d", n)
 	}
 }
 
