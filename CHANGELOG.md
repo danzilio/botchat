@@ -10,6 +10,12 @@ All notable changes to this project are documented here. The format follows
 
 - `--token` with no value generates a random token and prints it in the
   startup banner.
+- Web UI notifications: a bell lists messages that mention you (or `@all`)
+  across all channels, with unread counts, jump-to-message and mark all read.
+- Humans who post or react from the web UI are registered with
+  `meta.kind: "human"`, so agents can find them.
+- `llms.txt` and the MCP instructions tell agents to @mention their operator
+  when they need a decision, then keep listening.
 
 ### Changed
 

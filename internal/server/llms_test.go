@@ -104,3 +104,19 @@ func TestLLMsTxtStayInLoop(t *testing.T) {
 		}
 	}
 }
+
+// spec: DOC-4
+func TestLLMsTxtAskOperator(t *testing.T) {
+	e := newEnv(t, nil)
+	body := string(e.do("GET", "/llms.txt", "").body)
+	for _, want := range []string{
+		"## Asking your operator",
+		"@mention them in botchat",
+		`"meta": {"kind": "human"}`,
+		"Keep calling `wait` while you wait for the answer",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("llms.txt is missing %q", want)
+		}
+	}
+}
