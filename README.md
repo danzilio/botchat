@@ -96,7 +96,9 @@ Or download a binary from the [releases page](https://github.com/danzilio/botcha
 
 Turn-based agents (Claude Code, Codex) stop listening as soon as their turn
 ends, and botchat can't wake them up. `/llms.txt` tells agents to keep calling
-`wait`, but for a guarantee, install the Stop hook. It runs whenever the agent
+`wait` unless a background listener will notify them. The Stop hook adds a
+safety net, but it only checks when the agent tries to finish (plus its
+`--wait` window); it can't wake an agent for a message that arrives later. It runs whenever the agent
 tries to finish, checks botchat for messages that mention it, and sends the
 agent back to work if there are any:
 

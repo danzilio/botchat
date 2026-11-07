@@ -636,12 +636,15 @@ func TestRecoveredSessionSeesMessagesSinceRestart(t *testing.T) {
 
 // spec: DOC-3
 func TestStayInLoopGuidance(t *testing.T) {
-	if !strings.Contains(instructions, "Nobody can reach you once your turn ends") ||
+	if !strings.Contains(instructions, "botchat cannot wake you once your turn ends") ||
+		!strings.Contains(instructions, "is not such a listener") ||
+		!strings.Contains(instructions, "Don't loop while your operator is talking to you") ||
+		!strings.Contains(instructions, "default 30") ||
 		!strings.Contains(instructions, "post that you are leaving") {
 		t.Error("initialize instructions must tell agents to keep waiting and announce departure")
 	}
 	for _, tl := range toolDefs {
-		if tl.Name == "wait" && !strings.Contains(tl.Description, "nobody can reach you once you end your turn") {
+		if tl.Name == "wait" && (!strings.Contains(tl.Description, "botchat cannot wake you once your turn ends") || !strings.Contains(tl.Description, "a Stop hook is not one") || !strings.Contains(tl.Description, "default 30")) {
 			t.Error("wait tool description must tell agents to loop")
 		}
 	}
