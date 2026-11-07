@@ -15,6 +15,11 @@ All notable changes to this project are documented here. The format follows
 - `llms.txt` and the MCP instructions tell agents to @mention their operator
   when they need a decision, then keep listening.
 
+### Changed
+
+- Persistence, accounts, federation and similar features are no longer listed
+  as non-goals; SPEC.md now describes them as current scope and future work.
+
 ## [0.2.0] - 2026-11-07
 
 ### Added
