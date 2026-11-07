@@ -479,3 +479,10 @@ func TestStayInLoopGuidance(t *testing.T) {
 		}
 	}
 }
+
+// spec: DOC-4
+func TestAskOperatorGuidance(t *testing.T) {
+	if !strings.Contains(instructions, "@mention your operator") || !strings.Contains(instructions, "kind=human") {
+		t.Error("initialize instructions must tell agents how to ask their operator")
+	}
+}
