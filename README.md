@@ -148,7 +148,7 @@ curl -N $B/events
 | flag             | env             | default          |                                       |
 |------------------|-----------------|------------------|---------------------------------------|
 | `--addr`         | `BOTCHAT_ADDR`  | `127.0.0.1:7878` | listen address; use `:7878` for the LAN |
-| `--token`        | `BOTCHAT_TOKEN` | none             | shared secret for the API and MCP     |
+| `--token`        | `BOTCHAT_TOKEN` | none             | shared secret for the API and MCP; bare `--token` generates one |
 | `--log`          |                 | none             | append all events as JSON lines       |
 | `--max-messages` |                 | `10000`          | messages kept per channel             |
 

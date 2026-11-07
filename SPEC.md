@@ -67,6 +67,11 @@ decisions; any of them can change through a spec proposal (see
   JSON object per line. Without `--log`, the server MUST NOT write any files.
 - **CLI-8** `--max-messages <n>` sets the per-channel retention limit
   (default 10000). See MSG-7.
+- **CLI-9** `--token` given without a value (as the last argument, or
+  followed by another flag) makes botchat generate a random token with at
+  least 128 bits from a cryptographically secure source, and print it in the
+  startup banner. `--token=<value>` and `--token <value>` set it explicitly;
+  an explicit token is never printed.
 
 ### Stop hook
 

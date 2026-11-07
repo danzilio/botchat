@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -28,11 +29,14 @@ const DefaultAddr = "127.0.0.1:7878"
 
 // Config is the parsed command line.
 type Config struct {
-	Addr        string
-	Token       string
-	LogPath     string
-	MaxMessages int
-	ShowVersion bool
+	Addr  string
+	Token string
+	// TokenGenerated is true when --token was given without a value and
+	// Token was generated (CLI-9).
+	TokenGenerated bool
+	LogPath        string
+	MaxMessages    int
+	ShowVersion    bool
 }
 
 // ErrHelp is returned by ParseConfig when -h/--help was requested.
@@ -44,7 +48,7 @@ func ParseConfig(args []string, getenv func(string) string, stderr io.Writer) (C
 	fs := flag.NewFlagSet("botchat", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&c.Addr, "addr", envOr(getenv, "BOTCHAT_ADDR", DefaultAddr), "listen address (env BOTCHAT_ADDR)")
-	fs.StringVar(&c.Token, "token", getenv("BOTCHAT_TOKEN"), "shared secret required by the API and MCP (env BOTCHAT_TOKEN)")
+	fs.StringVar(&c.Token, "token", getenv("BOTCHAT_TOKEN"), "shared secret required by the API and MCP (env BOTCHAT_TOKEN); with no value, generate one")
 	fs.StringVar(&c.LogPath, "log", "", "append every event as JSON lines to this file")
 	fs.IntVar(&c.MaxMessages, "max-messages", 10000, "messages retained per channel")
 	fs.BoolVar(&c.ShowVersion, "version", false, "print version and exit")
@@ -52,8 +56,13 @@ func ParseConfig(args []string, getenv func(string) string, stderr io.Writer) (C
 		fmt.Fprintf(fs.Output(), "Usage: botchat [flags]\n       botchat hook stop [flags]   (Stop hook for Claude Code / Codex)\n\nAn ephemeral, real-time chat server for AI agents.\n\nFlags:\n")
 		fs.PrintDefaults()
 	}
+	args, generate := bareToken(fs, args)
 	if err := fs.Parse(args); err != nil {
 		return c, err
+	}
+	if generate {
+		c.Token = rand.Text()
+		c.TokenGenerated = true
 	}
 	if fs.NArg() > 0 {
 		fs.Usage()
@@ -63,6 +72,35 @@ func ParseConfig(args []string, getenv func(string) string, stderr io.Writer) (C
 		return c, errors.New("--max-messages must be positive")
 	}
 	return c, nil
+}
+
+// bareToken removes a --token that has no value, i.e. one that is the last
+// argument or is followed by another flag, and reports whether it found one
+// (CLI-9). The flag package would otherwise reject it or take the next flag
+// as its value.
+func bareToken(fs *flag.FlagSet, args []string) ([]string, bool) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" || a == "-" || !strings.HasPrefix(a, "-") {
+			return args, false // flag parsing stops here
+		}
+		name := strings.TrimLeft(a, "-")
+		if strings.Contains(name, "=") {
+			continue
+		}
+		if name == "token" {
+			if i+1 == len(args) || strings.HasPrefix(args[i+1], "-") {
+				return append(append([]string{}, args[:i]...), args[i+1:]...), true
+			}
+			return args, false
+		}
+		if f := fs.Lookup(name); f != nil {
+			if b, ok := f.Value.(interface{ IsBoolFlag() bool }); !ok || !b.IsBoolFlag() {
+				i++ // skip this flag's value
+			}
+		}
+	}
+	return args, false
 }
 
 func envOr(getenv func(string) string, key, def string) string {
@@ -128,7 +166,11 @@ func Run(ctx context.Context, cfg Config, version string, stdout io.Writer, read
 		ReadHeaderTimeout: 10 * time.Second,
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
-	printBanner(stdout, ln.Addr().String(), version, cfg.Token != "")
+	shown := ""
+	if cfg.TokenGenerated {
+		shown = cfg.Token
+	}
+	printBanner(stdout, ln.Addr().String(), version, cfg.Token != "", shown)
 
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
@@ -164,7 +206,9 @@ func eventLogger(w io.Writer) func(hub.Event) {
 	}
 }
 
-func printBanner(w io.Writer, addr, version string, auth bool) {
+// printBanner prints the startup banner (CLI-5). shown is a generated token
+// to display (CLI-9); an explicitly configured token is never printed.
+func printBanner(w io.Writer, addr, version string, auth bool, shown string) {
 	host, port, _ := net.SplitHostPort(addr)
 	display := host
 	if ip := net.ParseIP(host); ip == nil || ip.IsUnspecified() {
@@ -176,10 +220,18 @@ func printBanner(w io.Writer, addr, version string, auth bool) {
 	fmt.Fprintf(&b, "  Web UI:  %s/\n", base)
 	fmt.Fprintf(&b, "  MCP:     %s/mcp\n", base)
 	fmt.Fprintf(&b, "  API:     %s/api/v1\n", base)
-	fmt.Fprintf(&b, "  LLMs:    %s/llms.txt\n\n", base)
+	fmt.Fprintf(&b, "  LLMs:    %s/llms.txt\n", base)
+	if shown != "" {
+		fmt.Fprintf(&b, "  Token:   %s (generated)\n", shown)
+	}
+	b.WriteString("\n")
 	fmt.Fprintf(&b, "Connect Claude Code:\n  claude mcp add --transport http botchat '%s/mcp?agent=<name>'", base)
 	if auth {
-		fmt.Fprintf(&b, " --header 'Authorization: Bearer <token>'")
+		tok := "<token>"
+		if shown != "" {
+			tok = shown
+		}
+		fmt.Fprintf(&b, " --header 'Authorization: Bearer %s'", tok)
 	}
 	fmt.Fprintf(&b, "\n\nState is in memory only. Press Ctrl+C to stop.\n")
 	io.WriteString(w, b.String())
