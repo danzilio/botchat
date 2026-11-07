@@ -133,10 +133,12 @@ use it.
   for Codex, which is told to read the token from the `BOTCHAT_TOKEN`
   environment variable. Flags take precedence over the environment.
 - **INS-4** Edits to JSON config files keep every other key and the order of
-  keys. A missing file is created (with mode `0600`, parent directories
-  `0700`). A file that is not a JSON object (for example, one with comments)
-  is not modified; that agent fails with an error that shows the entry to add
-  by hand. Files are replaced atomically.
+  keys. A missing or empty file is created or filled (new files get mode
+  `0600`, parent directories `0700`). A file that is not a JSON object (for
+  example `null`, or one with comments) or that repeats a key is not
+  modified; that agent fails with an error that shows the entry to add by
+  hand. Files are replaced atomically, and a symlinked config file (even a
+  dangling one) is written through to its target, never replaced.
 - **INS-5** An agent that already has a `botchat` server is left unchanged
   and reported as such, unless `--force` is given, in which case the entry is
   replaced.

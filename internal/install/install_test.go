@@ -472,13 +472,63 @@ func TestFailuresAndUsage(t *testing.T) {
 	}
 }
 
+// spec: INS-4
+func TestRejectedFilesUntouched(t *testing.T) {
+	for _, orig := range []string{
+		"null\n",
+		`{"mcpServers":{"first":{}},"mcpServers":{"last":{}}}`,
+		`{"mcpServers":{"botchat":{"url":"a"},"botchat":{"url":"b"}}}`,
+	} {
+		m := newMachine(t, "cursor")
+		path := m.write(".cursor/mcp.json", orig)
+		if code, out := m.run("", nil, "--agents", "cursor", "--force"); code != 1 || !strings.Contains(out, "Add this by hand") {
+			t.Errorf("%s: exit %d: %s", orig, code, out)
+		}
+		if m.read(path) != orig {
+			t.Errorf("%s: file modified", orig)
+		}
+	}
+}
+
+// spec: INS-4
+func TestEmptyFileFilled(t *testing.T) {
+	m := newMachine(t, "cursor")
+	path := m.write(".cursor/mcp.json", " \n")
+	if code, out := m.run("", nil, "--agents", "cursor"); code != 0 {
+		t.Fatalf("exit %d: %s", code, out)
+	}
+	decode(t, m.read(path))
+}
+
+// spec: INS-4
+func TestDanglingSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	m := newMachine(t, "cursor")
+	m.mkdir(".cursor")
+	link := filepath.Join(m.home, ".cursor", "mcp.json")
+	if err := os.Symlink("../dotfiles/cursor/mcp.json", link); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := m.run("", nil, "--agents", "cursor"); code != 0 {
+		t.Fatalf("exit %d: %s", code, out)
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("symlink was replaced")
+	}
+	if !strings.Contains(m.read(filepath.Join(m.home, "dotfiles", "cursor", "mcp.json")), "botchat") {
+		t.Error("target not written")
+	}
+}
+
 func TestParseObject(t *testing.T) {
-	for _, bad := range []string{`[]`, `{"a":1} x`, `{"a":}`, `"s"`} {
+	for _, bad := range []string{`[]`, `{"a":1} x`, `{"a":}`, `"s"`, `null`, `{"a":1,"a":2}`} {
 		if _, err := parseObject([]byte(bad)); err == nil {
 			t.Errorf("%s: expected error", bad)
 		}
 	}
-	for _, empty := range []string{``, ` `, `null`, `{}`} {
+	for _, empty := range []string{``, ` `, `{}`} {
 		if o, err := parseObject([]byte(empty)); err != nil || len(o) != 0 {
 			t.Errorf("%q: %v %v", empty, o, err)
 		}

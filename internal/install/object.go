@@ -18,11 +18,12 @@ type member struct {
 	Value json.RawMessage
 }
 
-// parseObject parses a JSON object. Empty input and null are an empty
-// object; anything else that isn't an object is an error.
+// parseObject parses a JSON object. Empty (or whitespace-only) input is an
+// empty object. Anything else that isn't an object, including null, is an
+// error, and so are duplicate keys, since decoders disagree on which wins.
 func parseObject(b []byte) (object, error) {
 	b = bytes.TrimSpace(b)
-	if len(b) == 0 || string(b) == "null" {
+	if len(b) == 0 {
 		return object{}, nil
 	}
 	dec := json.NewDecoder(bytes.NewReader(b))
@@ -46,6 +47,9 @@ func parseObject(b []byte) (object, error) {
 		var v json.RawMessage
 		if err := dec.Decode(&v); err != nil {
 			return nil, fmt.Errorf("invalid JSON: %w", err)
+		}
+		if _, dup := o.get(key); dup {
+			return nil, fmt.Errorf("duplicate key %q", key)
 		}
 		o = append(o, member{key, v})
 	}

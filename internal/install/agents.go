@@ -291,7 +291,7 @@ func readObject(path string) (object, error) {
 
 func servers(obj object, container string) (object, error) {
 	raw, ok := obj.get(container)
-	if !ok {
+	if !ok || string(bytes.TrimSpace(raw)) == "null" {
 		return object{}, nil
 	}
 	s, err := parseObject(raw)
@@ -317,11 +317,12 @@ func mustJSON(o object) json.RawMessage {
 }
 
 // writeFileAtomic replaces path with data via a temp file and rename,
-// keeping the existing file's mode and following a symlink to its target
-// (INS-4).
+// keeping the existing file's mode and following symlinks to their target,
+// even a target that doesn't exist yet (INS-4).
 func writeFileAtomic(path string, data []byte) error {
-	if target, err := filepath.EvalSymlinks(path); err == nil {
-		path = target
+	path, err := resolveLinks(path)
+	if err != nil {
+		return err
 	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -349,6 +350,32 @@ func writeFileAtomic(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// resolveLinks follows symlinks at path, including dangling ones, so the
+// link itself is never replaced by a regular file.
+func resolveLinks(path string) (string, error) {
+	for range 40 {
+		fi, err := os.Lstat(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			return path, nil
+		}
+		if err != nil {
+			return "", err
+		}
+		if fi.Mode()&os.ModeSymlink == 0 {
+			return path, nil
+		}
+		target, err := os.Readlink(path)
+		if err != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(path), target)
+		}
+		path = target
+	}
+	return "", fmt.Errorf("%s: too many levels of symbolic links", path)
 }
 
 func cmdline(bin string, args []string) string {
