@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `botchat install` finds coding agents on the machine (Claude Code, Codex,
+  Cursor, Gemini CLI, opencode, VS Code, Windsurf) and adds botchat as an MCP
+  server to the ones you choose.
+
 ## [0.3.0] - 2026-11-07
 
 ### Added

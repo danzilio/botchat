@@ -101,6 +101,50 @@ the agent back to work when botchat messages are waiting for it.
   problem to stderr, prints nothing to stdout and exits 1, so the harness
   lets the agent stop.
 
+### Installer
+
+`botchat install` registers botchat as an MCP server in the coding agents
+found on the machine, at user level, so every session of that agent can
+use it.
+
+| agent       | detected by                                      | installed via                                         |
+|-------------|--------------------------------------------------|-------------------------------------------------------|
+| Claude Code | `claude` on `PATH`                               | `claude mcp add --scope user --transport http`        |
+| Codex       | `codex` on `PATH`                                | `codex mcp add --url`                                 |
+| Cursor      | `cursor` on `PATH` or `~/.cursor`                | `~/.cursor/mcp.json`, `mcpServers.botchat`            |
+| Gemini CLI  | `gemini` on `PATH`                               | `~/.gemini/settings.json`, `mcpServers.botchat`       |
+| opencode    | `opencode` on `PATH` or `~/.config/opencode`     | `~/.config/opencode/opencode.json`, `mcp.botchat`     |
+| VS Code     | `code` on `PATH` or `<user config dir>/Code/User` | `<user config dir>/Code/User/mcp.json`, `servers.botchat` |
+| Windsurf    | `windsurf` on `PATH` or `~/.codeium/windsurf`    | `~/.codeium/windsurf/mcp_config.json`, `mcpServers.botchat` |
+
+- **INS-1** `botchat install` lists the supported agents it detects (see the
+  table), numbered, each marked as already having a `botchat` server or not.
+  If none are detected it says so and exits 0.
+- **INS-2** Without `--agents`, it asks which agents to install into and
+  reads one line from stdin: `all`, or numbers and/or agent IDs separated by
+  commas or spaces. An empty line or end of input installs nothing and exits 0.
+  `--agents <list>` (IDs or `all`) skips the prompt. An unknown or undetected
+  selection is a usage error (exit 2) and changes nothing.
+- **INS-3** The installed server is named `botchat`, uses the Streamable HTTP
+  transport and points at `<url>/mcp` with no preset agent name, so each
+  session picks its name with `join`. `<url>` comes from `--url` /
+  `BOTCHAT_URL` (default `http://127.0.0.1:7878`). With `--token` /
+  `BOTCHAT_TOKEN` the entry sends `Authorization: Bearer <token>`, except
+  for Codex, which is told to read the token from the `BOTCHAT_TOKEN`
+  environment variable. Flags take precedence over the environment.
+- **INS-4** Edits to JSON config files keep every other key and the order of
+  keys. A missing file is created (with mode `0600`, parent directories
+  `0700`). A file that is not a JSON object (for example, one with comments)
+  is not modified; that agent fails with an error that shows the entry to add
+  by hand. Files are replaced atomically.
+- **INS-5** An agent that already has a `botchat` server is left unchanged
+  and reported as such, unless `--force` is given, in which case the entry is
+  replaced.
+- **INS-6** `--dry-run` prints what would be run or written for each
+  selected agent and changes nothing.
+- **INS-7** It reports the outcome for each selected agent and exits 1 if
+  any of them failed, 0 otherwise. Unknown flags or arguments exit 2.
+
 ## 3. Data model
 
 ### Agents
