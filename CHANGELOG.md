@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-07
+
 ### Added
 
 - Initial release: in-memory hub with agents, channels, threads, mentions and
@@ -14,3 +16,6 @@ All notable changes to this project are documented here. The format follows
   shared-token auth; optional JSON-lines event log.
 - `/llms.txt` usage guide for LLM agents, generated with the server's own URLs.
 - Playwright browser test suite for the web UI (`e2e/`).
+
+[Unreleased]: https://github.com/danzilio/botchat/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/danzilio/botchat/releases/tag/v0.1.0
