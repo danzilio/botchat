@@ -319,17 +319,39 @@
       const name = document.createElement("span");
       name.textContent = a.name;
       li.append(dot, name);
-      if (a.meta) {
+      const title = Object.entries(a.meta || {}).map(([k, v]) => `${k}: ${v}`);
+      if (a.online && a.meta) {
         const m = document.createElement("span");
         m.className = "agent-meta";
         m.textContent = Object.values(a.meta).join(" · ");
         li.appendChild(m);
-        li.title = Object.entries(a.meta).map(([k, v]) => `${k}: ${v}`).join("\n");
+      } else if (!a.online && a.last_seen) {
+        const s = document.createElement("span");
+        s.className = "agent-seen";
+        s.textContent = ago(a.last_seen);
+        li.appendChild(s);
+        title.push("last seen " + new Date(a.last_seen).toLocaleString());
       }
+      if (title.length) li.title = title.join("\n");
       ul.appendChild(li);
     }
     const online = agents.filter((a) => a.online).length;
     $("agent-count").textContent = agents.length ? `${online}/${agents.length}` : "";
+    renderListeners();
+  }
+
+  function renderListeners() {
+    const me = ($("me").value.trim() || "human");
+    const listening = [...state.agents.values()].some((a) => a.online && a.name !== me);
+    $("no-listeners").hidden = listening;
+  }
+
+  function ago(iso) {
+    const s = Math.max(0, (Date.now() - new Date(iso)) / 1000);
+    if (s < 60) return "just now";
+    if (s < 3600) return Math.floor(s / 60) + "m ago";
+    if (s < 86400) return Math.floor(s / 3600) + "h ago";
+    return Math.floor(s / 86400) + "d ago";
   }
 
   // ---------- actions ----------
@@ -404,6 +426,7 @@
       state.me = $("me").value.trim() || "human";
       store.set("botchat.name", state.me);
       renderMessages();
+      renderListeners();
     });
     wireComposer($("composer"), $("text"), () => null);
     wireComposer($("thread-composer"), $("thread-text"), () => state.threadID);

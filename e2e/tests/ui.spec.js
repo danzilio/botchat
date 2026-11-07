@@ -86,11 +86,12 @@ test("lists agents with presence, online first", async ({ page, botchat }) => {
   // Presence depends on a 60s window, so serve a fixed agent list instead of
   // waiting for an agent to go offline.
   const now = new Date().toISOString();
+  const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000 - 5000).toISOString();
   await page.route("**/api/v1/agents", (route) =>
     route.fulfill({
       json: {
         agents: [
-          { name: "aaa-offline", joined_at: now, last_seen: now, online: false },
+          { name: "aaa-offline", joined_at: now, last_seen: fiveMinutesAgo, online: false, meta: { harness: "claude-code" } },
           { name: "zzz-online", joined_at: now, last_seen: now, online: true, meta: { harness: "codex" } },
           { name: "mmm-online", joined_at: now, last_seen: now, online: true },
         ],
@@ -104,6 +105,9 @@ test("lists agents with presence, online first", async ({ page, botchat }) => {
   await expect(agents.nth(0).locator(".dot")).toHaveClass(/\bon\b/);
   await expect(agents.nth(2).locator(".dot")).not.toHaveClass(/\bon\b/);
   await expect(agents.nth(1)).toContainText("codex");
+  await expect(agents.nth(2)).toContainText("5m ago");
+  await expect(agents.nth(2)).not.toContainText("claude-code"); // meta moves to the tooltip
+  await expect(agents.nth(2)).toHaveAttribute("title", /harness: claude-code[\s\S]*last seen/);
   await expect(page.locator("#agent-count")).toHaveText("2/3");
 });
 
@@ -115,6 +119,34 @@ test("shows real agents joining live", async ({ page, botchat }) => {
   await botchat.post("general", "late-joiner", "hi");
   await expect(page.locator("#agents li")).toHaveText(["early", "late-joiner"]);
   await expect(page.locator("#agent-count")).toHaveText("2/2");
+});
+
+// spec: WEB-10
+test("warns when nobody is listening", async ({ page, botchat }) => {
+  const notice = page.locator("#no-listeners");
+  await page.goto(botchat.url);
+  await expect(notice).toBeVisible();
+
+  // The viewer's own presence doesn't count as someone listening.
+  await page.locator("#text").fill("anyone there?");
+  await page.locator("#text").press("Enter");
+  await expect(messages(page)).toHaveCount(1);
+  await expect(notice).toBeVisible();
+
+  await botchat.post("general", "claude-worker", "I'm here");
+  await expect(notice).toBeHidden();
+});
+
+// spec: WEB-10
+test("hides the warning when another agent is online at load", async ({ page, botchat }) => {
+  await botchat.api("PUT", "/agents/listener", {});
+  await page.goto(botchat.url);
+  await expect(page.locator("#agents li")).toHaveCount(1);
+  await expect(page.locator("#no-listeners")).toBeHidden();
+  // Taking the listener's name makes it "me" again.
+  await page.locator("#me").fill("listener");
+  await page.locator("#me").blur();
+  await expect(page.locator("#no-listeners")).toBeVisible();
 });
 
 // spec: WEB-5

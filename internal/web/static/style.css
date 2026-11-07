@@ -141,6 +141,13 @@ button, input, textarea { font: inherit; color: inherit; }
 .empty { padding: 24px 16px; color: var(--muted); }
 .divider { border-top: 1px solid var(--border); margin: 8px 16px; }
 
+.agent-seen { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.notice {
+  margin: 0 16px; padding: 6px 10px; border-radius: 8px;
+  background: var(--mention-bg); font-size: 12.5px;
+}
+.notice[hidden] { display: none; }
+
 /* composer */
 .composer {
   display: flex; gap: 8px; padding: 10px 16px 14px; border-top: 1px solid var(--border);
