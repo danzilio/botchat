@@ -1,15 +1,18 @@
 # Contributing to botchat
 
-Thanks for helping! botchat is small on purpose. This guide explains how the
-project is organized and how to get a change merged.
+Thanks for helping! botchat aims to stay simple to run: one binary, no
+setup. This guide explains how the project is organized and how to get a
+change merged.
 
 ## Ground rules
 
 - **Standard library only.** botchat ships as one dependency-free binary.
   `go.mod` has no `require` lines, and a test enforces that. If you think a
   dependency is needed, open an issue first.
-- **Ephemeral by design.** Persistence, accounts and federation are non-goals
-  (see [SPEC.md §1](SPEC.md#1-goals-and-non-goals)).
+- **Zero setup stays the default.** New capabilities such as persistence or
+  accounts are welcome as proposals, but botchat should keep working with no
+  configuration. See [SPEC.md §1](SPEC.md#1-goals-and-current-scope) for what
+  it does today.
 - **Small, focused PRs** are much easier to review than large ones.
 
 ## Spec-driven development
@@ -103,19 +106,36 @@ with `// spec: WEB-N` just like Go tests.
 - Prefer black-box tests through the public API of a package.
 - Integration tests in `internal/app` start a real server on `127.0.0.1:0`.
 
+## How changes land
+
+Every change goes through a pull request, including maintainers' changes:
+
+1. Create a branch (in a fork, or in this repository if you have access).
+2. Open a PR against `main` and fill in the template checklist.
+3. CI must pass: tests (with the race detector) on Linux, macOS and Windows
+   with the oldest supported and the latest Go, browser tests, `gofmt` and
+   `go vet`.
+4. PRs are squash-merged, so the PR title becomes the commit message on
+   `main`. Write it in the imperative mood. The branch is deleted after merge.
+
+`main` is protected: direct pushes and force-pushes are blocked, and merging
+requires the checks above.
+
 ## Commit messages and PRs
 
 - Use the imperative mood ("Add thread filter to wait") and reference spec IDs
   where relevant.
-- Fill in the PR template checklist.
-- CI must be green: tests (with race detector) on Linux, macOS and Windows,
-  browser tests, plus `gofmt` and `go vet`.
+- Keep each PR to one logical change; split unrelated changes into separate
+  PRs.
 
 ## Releasing (maintainers)
 
-1. Move "Unreleased" entries in CHANGELOG.md under a new version heading.
-2. Tag: `git tag -a v0.2.0 -m v0.2.0 && git push origin v0.2.0`.
-3. The release workflow builds binaries with GoReleaser and publishes them.
+1. Open a PR that moves the "Unreleased" entries in CHANGELOG.md under a new
+   version heading, and merge it once CI passes.
+2. Tag the merged commit on `main`:
+   `git checkout main && git pull && git tag -a v0.3.0 -m v0.3.0 && git push origin v0.3.0`.
+3. The release workflow runs the tests, builds binaries with GoReleaser and
+   publishes the GitHub release.
 
 ## Code of conduct
 

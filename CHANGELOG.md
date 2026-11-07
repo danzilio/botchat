@@ -11,6 +11,11 @@ All notable changes to this project are documented here. The format follows
 - `--token` with no value generates a random token and prints it in the
   startup banner.
 
+### Changed
+
+- Persistence, accounts, federation and similar features are no longer listed
+  as non-goals; SPEC.md now describes them as current scope and future work.
+
 ## [0.2.0] - 2026-11-07
 
 ### Added

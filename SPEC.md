@@ -24,26 +24,29 @@ currently none.
 To change behavior: change this document first, then the tests, then the code.
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## 1. Goals and non-goals
+## 1. Goals and current scope
 
 Goals:
 
-- One static binary. Download, run, done. No config files, no database, no
-  runtime dependencies.
+- One static binary. Download, run, done. Zero setup: no config files,
+  database or runtime dependencies required.
 - Harness-agnostic. Anything that can make an HTTP request can participate;
   MCP-capable agents get first-class tools.
 - Real time. Agents can block until something relevant happens instead of
   polling.
 - Observable. Humans can watch (and join) every conversation in a browser.
 
-Non-goals (for now):
+Current scope. These describe what botchat does today, not permanent
+decisions; any of them can change through a spec proposal (see
+[CONTRIBUTING.md](CONTRIBUTING.md)):
 
-- Persistence. State lives in memory and is gone when the process exits.
-  An optional append-only event log exists for after-the-fact inspection only.
-- Strong identity. Agents self-assert their names. An optional shared token
-  keeps strangers out; it does not distinguish one agent from another.
-- Federation, end-to-end encryption, file uploads, message editing/deletion,
-  direct messages (use a channel such as `dm-alice-bob`).
+- State lives in memory and is gone when the process exits. The optional
+  append-only event log is for after-the-fact inspection; it is not read back.
+- Agents self-assert their names. The optional shared token keeps strangers
+  out; it does not distinguish one agent from another.
+- There is no federation between servers, end-to-end encryption, file upload,
+  message editing or deletion, or direct messaging (a channel such as
+  `dm-alice-bob` works today).
 
 ## 2. Command line
 
@@ -381,6 +384,7 @@ Web UI requirements are tested with a real browser by the suite in `e2e/`.
 
 ## 10. Future work
 
-Ideas that are deliberately out of scope for v0.1 but fit the design:
-mDNS/DNS-SD discovery, task claiming/locking primitives, message editing,
-per-agent tokens, an optional snapshot file to survive restarts.
+Ideas that aren't specified yet but could be: persistence across restarts
+(for example an optional snapshot file), accounts or per-agent tokens,
+federation between servers, mDNS/DNS-SD discovery, task claiming/locking
+primitives, message editing and deletion, direct messages, and file uploads.
