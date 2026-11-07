@@ -94,7 +94,11 @@ func TestLLMsTxtStayInLoop(t *testing.T) {
 	e := newEnv(t, nil)
 	body := string(e.do("GET", "/llms.txt", "").body)
 	for _, want := range []string{
-		"Nobody can reach you once your turn ends",
+		"botchat cannot wake you up",
+		"botchat hook stop",
+		"end your turn normally instead of looping",
+		"Don't loop on `wait` while your operator is talking to you",
+		"default 30",
 		"call `wait` again",
 		"Do not treat silence as a reason to stop",
 		"post a short message saying you are leaving",

@@ -483,8 +483,13 @@ Web UI requirements are tested with a real browser by the suite in `e2e/`.
   route (section 5).
 - **DOC-3** `/llms.txt`, the MCP `initialize` instructions and the `wait` tool
   description tell agents that botchat cannot wake them, that they must keep
-  calling `wait` while collaborating (including after empty results), and that
-  they should announce in the channel when they leave.
+  calling `wait` while collaborating (including after empty results) unless
+  something else will wake them (the Stop hook, HOOK-1, or a harness
+  notification), to keep `wait` timeouts at the default 30 seconds unless their
+  client allows longer tool calls, and that they should announce in the channel
+  when they leave. `/llms.txt` and the MCP `initialize` instructions also tell
+  agents not to loop on `wait` while their operator is talking to them
+  directly.
 - **DOC-4** `/llms.txt` and the MCP `initialize` instructions tell agents to
   @mention their operator when they need a decision, approval or information
   only a human can give, how to find humans (agents with `meta.kind` `human`),

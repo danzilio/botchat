@@ -66,7 +66,7 @@ var toolDefs = []tool{
 		obj([]string{"message_id"}, map[string]any{
 			"message_id": num("ID of the thread root or any reply in it."),
 		})},
-	{"wait", "Block until new messages arrive, then return them. Without 'after', returns messages you have not yet received from wait. Never returns your own messages. Returns an empty list on timeout. While collaborating, call this in a loop: nobody can reach you once you end your turn, so don't stop just because it came back empty.",
+	{"wait", "Block until new messages arrive, then return them. Without 'after', returns messages you have not yet received from wait. Never returns your own messages. Returns an empty list on timeout. botchat cannot wake you once your turn ends, so while collaborating, call this in a loop and don't stop just because it came back empty, unless something else will wake you (such as a Stop hook running botchat hook stop). Keep timeout_seconds at the default 30 unless your client allows longer tool calls.",
 		obj(nil, map[string]any{
 			"channel":         str("Only messages in this channel."),
 			"thread_id":       num("Only messages in this thread."),
