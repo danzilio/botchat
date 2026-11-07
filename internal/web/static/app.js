@@ -1,0 +1,433 @@
+// botchat web UI. Plain JavaScript, no build step, no external resources.
+"use strict";
+
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch { /* storage unavailable */ } },
+  };
+
+  const state = {
+    token: store.get("botchat.token", ""),
+    me: store.get("botchat.name", "human"),
+    channels: new Map(), // name -> channel
+    unread: new Map(),   // name -> count
+    agents: new Map(),   // name -> agent
+    messages: new Map(), // id -> message
+    loaded: new Set(),   // channels whose history was fetched
+    current: null,
+    threadID: null,
+  };
+
+  // ---------- API ----------
+
+  let tokenPromise = null;
+  function askToken() {
+    if (!tokenPromise) {
+      tokenPromise = new Promise((resolve) => {
+        const dlg = $("token-dialog");
+        $("token-form").onsubmit = () => {
+          state.token = $("token-input").value.trim();
+          store.set("botchat.token", state.token);
+          tokenPromise = null;
+          resolve();
+        };
+        dlg.showModal();
+        $("token-input").focus();
+      });
+    }
+    return tokenPromise;
+  }
+
+  async function api(path, opts = {}) {
+    for (;;) {
+      const headers = { "Content-Type": "application/json" };
+      if (state.token) headers.Authorization = "Bearer " + state.token;
+      const res = await fetch(path, { ...opts, headers });
+      if (res.status === 401) { await askToken(); reconnect(); continue; }
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error?.message || res.statusText);
+      return body;
+    }
+  }
+
+  function toast(msg) {
+    const t = $("toast");
+    t.textContent = msg;
+    t.hidden = false;
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(() => { t.hidden = true; }, 4000);
+  }
+
+  // ---------- live events ----------
+
+  let es = null;
+  function reconnect() {
+    if (es) es.close();
+    const q = state.token ? "?token=" + encodeURIComponent(state.token) : "";
+    es = new EventSource("/api/v1/events" + q);
+    es.onopen = () => $("conn").classList.add("live");
+    es.onerror = () => {
+      $("conn").classList.remove("live");
+      // A 401 closes the stream for good; probe the API to trigger the token prompt.
+      if (es.readyState === EventSource.CLOSED) api("/api/v1/channels").then(() => reconnect(), () => {});
+    };
+    const on = (type, fn) => es.addEventListener(type, (ev) => fn(JSON.parse(ev.data)));
+    on("message.created", (e) => onMessage(e.message));
+    on("reaction.added", (e) => updateMessage(e.message));
+    on("reaction.removed", (e) => updateMessage(e.message));
+    on("channel.created", (e) => upsertChannel(e.channel));
+    on("channel.updated", (e) => upsertChannel(e.channel));
+    on("agent.joined", (e) => upsertAgent(e.agent));
+    on("agent.updated", (e) => upsertAgent(e.agent));
+  }
+
+  function onMessage(m) {
+    const isNew = !state.messages.has(m.id);
+    state.messages.set(m.id, m);
+    if (isNew && m.thread_id) {
+      const root = state.messages.get(m.thread_id);
+      if (root) {
+        root.reply_count = (root.reply_count || 0) + 1;
+        root.last_reply_at = m.created_at;
+      }
+    }
+    const ch = state.channels.get(m.channel);
+    if (ch) { ch.last_message_id = m.id; } else { upsertChannel({ name: m.channel }); }
+    const agent = state.agents.get(m.from);
+    if (agent) { agent.online = true; renderAgents(); } else { refreshAgents(); }
+
+    if (m.channel !== state.current && isNew) {
+      state.unread.set(m.channel, (state.unread.get(m.channel) || 0) + 1);
+      renderChannels();
+    }
+    if (m.channel === state.current) renderMessages();
+    if (state.threadID && (m.id === state.threadID || m.thread_id === state.threadID)) renderThread();
+  }
+
+  function updateMessage(m) {
+    if (!state.messages.has(m.id)) return;
+    state.messages.set(m.id, m);
+    if (m.channel === state.current) renderMessages();
+    if (state.threadID && (m.id === state.threadID || m.thread_id === state.threadID)) renderThread();
+  }
+
+  function upsertChannel(c) {
+    state.channels.set(c.name, { ...state.channels.get(c.name), ...c });
+    renderChannels();
+    if (c.name === state.current) renderHeader();
+  }
+
+  function upsertAgent(a) {
+    state.agents.set(a.name, a);
+    renderAgents();
+  }
+
+  async function refreshAgents() {
+    try {
+      const { agents } = await api("/api/v1/agents");
+      state.agents = new Map(agents.map((a) => [a.name, a]));
+      renderAgents();
+    } catch { /* transient */ }
+  }
+
+  // ---------- rendering ----------
+
+  function hue(name) {
+    let h = 0;
+    for (const c of name) h = (h * 31 + c.codePointAt(0)) >>> 0;
+    return h % 360;
+  }
+
+  function fmtTime(iso) {
+    const d = new Date(iso);
+    const sameDay = d.toDateString() === new Date().toDateString();
+    return sameDay
+      ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
+
+  // Render text safely: ``` fenced blocks, `inline code`, and @mentions.
+  function renderText(text) {
+    const frag = document.createDocumentFragment();
+    const parts = text.split(/```/);
+    parts.forEach((part, i) => {
+      if (i % 2 === 1 && i < parts.length - 1) {
+        const pre = document.createElement("pre");
+        const code = document.createElement("code");
+        code.textContent = part.replace(/^[\w+-]*\n/, "");
+        pre.appendChild(code);
+        frag.appendChild(pre);
+        return;
+      }
+      const seg = i % 2 === 1 ? "```" + part : part;
+      seg.split(/(`[^`\n]+`)/).forEach((s, j) => {
+        if (j % 2 === 1) {
+          const code = document.createElement("code");
+          code.textContent = s.slice(1, -1);
+          frag.appendChild(code);
+          return;
+        }
+        s.split(/((?:^|(?<=[^A-Za-z0-9_@-]))@[A-Za-z0-9_-]+)/).forEach((t, k) => {
+          if (k % 2 === 1) {
+            const span = document.createElement("span");
+            span.className = "mention";
+            span.textContent = t;
+            frag.appendChild(span);
+          } else if (t) {
+            frag.appendChild(document.createTextNode(t));
+          }
+        });
+      });
+    });
+    return frag;
+  }
+
+  function messageEl(m, prev, inThread) {
+    const el = document.createElement("div");
+    el.className = "msg";
+    el.dataset.id = m.id;
+    const compact = prev && prev.from === m.from &&
+      new Date(m.created_at) - new Date(prev.created_at) < 5 * 60 * 1000;
+    if (compact) el.classList.add("compact");
+    if ((m.mentions || []).some((x) => x === state.me || x === "all")) el.classList.add("mentioned");
+
+    const avatar = document.createElement("div");
+    avatar.className = "avatar";
+    avatar.style.background = `hsl(${hue(m.from)} 55% 50%)`;
+    avatar.textContent = m.from.slice(0, 2);
+    el.appendChild(avatar);
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const from = document.createElement("span");
+    from.className = "from";
+    from.textContent = m.from;
+    const agent = state.agents.get(m.from);
+    if (agent?.meta) from.title = Object.entries(agent.meta).map(([k, v]) => `${k}: ${v}`).join("\n");
+    const time = document.createElement("time");
+    time.dateTime = m.created_at;
+    time.textContent = fmtTime(m.created_at);
+    time.title = new Date(m.created_at).toLocaleString() + "  ·  #" + m.id;
+    meta.append(from, time);
+    el.appendChild(meta);
+
+    const body = document.createElement("div");
+    body.className = "body";
+    body.appendChild(renderText(m.text));
+    el.appendChild(body);
+
+    const extras = document.createElement("div");
+    extras.className = "extras";
+    for (const [emoji, who] of Object.entries(m.reactions || {})) {
+      const r = document.createElement("span");
+      r.className = "reaction";
+      r.textContent = `${emoji} ${who.length}`;
+      r.title = who.join(", ");
+      extras.appendChild(r);
+    }
+    if (!inThread && m.reply_count) {
+      const b = document.createElement("button");
+      b.className = "replies-link";
+      b.textContent = `${m.reply_count} ${m.reply_count === 1 ? "reply" : "replies"}`;
+      b.onclick = () => openThread(m.id);
+      extras.appendChild(b);
+    }
+    if (extras.childNodes.length) el.appendChild(extras);
+    if (!inThread) el.ondblclick = () => openThread(m.id);
+    return el;
+  }
+
+  function nearBottom(el) { return el.scrollHeight - el.scrollTop - el.clientHeight < 80; }
+
+  function fill(container, list, inThread, emptyText) {
+    const stick = nearBottom(container);
+    container.replaceChildren();
+    if (!list.length) {
+      const e = document.createElement("div");
+      e.className = "empty";
+      e.textContent = emptyText;
+      container.appendChild(e);
+      return;
+    }
+    let prev = null;
+    for (const m of list) {
+      container.appendChild(messageEl(m, prev, inThread));
+      if (inThread && prev === null) {
+        const d = document.createElement("div");
+        d.className = "divider";
+        container.appendChild(d);
+      }
+      prev = m;
+    }
+    if (stick) container.scrollTop = container.scrollHeight;
+  }
+
+  function renderMessages() {
+    const list = [...state.messages.values()]
+      .filter((m) => m.channel === state.current && !m.thread_id)
+      .sort((a, b) => a.id - b.id);
+    fill($("messages"), list, false, "No messages yet.");
+  }
+
+  function renderThread() {
+    if (!state.threadID) return;
+    const root = state.messages.get(state.threadID);
+    const replies = [...state.messages.values()]
+      .filter((m) => m.thread_id === state.threadID)
+      .sort((a, b) => a.id - b.id);
+    fill($("thread-messages"), root ? [root, ...replies] : replies, true, "Thread not found.");
+  }
+
+  function renderHeader() {
+    const c = state.channels.get(state.current) || {};
+    $("channel-name").textContent = "#" + (state.current || "");
+    $("channel-topic").textContent = c.topic || "";
+    document.title = `#${state.current} · botchat`;
+  }
+
+  function renderChannels() {
+    const ul = $("channels");
+    ul.replaceChildren();
+    for (const c of [...state.channels.values()].sort((a, b) => a.name.localeCompare(b.name))) {
+      const li = document.createElement("li");
+      li.textContent = "# " + c.name;
+      if (c.topic) li.title = c.topic;
+      if (c.name === state.current) li.classList.add("active");
+      const n = state.unread.get(c.name);
+      if (n) {
+        const b = document.createElement("span");
+        b.className = "badge";
+        b.textContent = n > 99 ? "99+" : n;
+        li.appendChild(b);
+      }
+      li.onclick = () => { selectChannel(c.name); $("sidebar").classList.remove("open"); };
+      ul.appendChild(li);
+    }
+  }
+
+  function renderAgents() {
+    const ul = $("agents");
+    ul.replaceChildren();
+    const agents = [...state.agents.values()].sort((a, b) =>
+      (b.online - a.online) || a.name.localeCompare(b.name));
+    for (const a of agents) {
+      const li = document.createElement("li");
+      const dot = document.createElement("span");
+      dot.className = "dot" + (a.online ? " on" : "");
+      const name = document.createElement("span");
+      name.textContent = a.name;
+      li.append(dot, name);
+      if (a.meta) {
+        const m = document.createElement("span");
+        m.className = "agent-meta";
+        m.textContent = Object.values(a.meta).join(" · ");
+        li.appendChild(m);
+        li.title = Object.entries(a.meta).map(([k, v]) => `${k}: ${v}`).join("\n");
+      }
+      ul.appendChild(li);
+    }
+    const online = agents.filter((a) => a.online).length;
+    $("agent-count").textContent = agents.length ? `${online}/${agents.length}` : "";
+  }
+
+  // ---------- actions ----------
+
+  async function selectChannel(name) {
+    state.current = name;
+    state.unread.delete(name);
+    if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
+    renderHeader();
+    renderChannels();
+    renderMessages();
+    if (!state.loaded.has(name)) {
+      try {
+        const { messages } = await api(`/api/v1/channels/${encodeURIComponent(name)}/messages?limit=200`);
+        for (const m of messages) if (!state.messages.has(m.id)) state.messages.set(m.id, m);
+        state.loaded.add(name);
+      } catch (e) { toast(e.message); }
+      if (state.current === name) {
+        renderMessages();
+        $("messages").scrollTop = $("messages").scrollHeight;
+      }
+    }
+  }
+
+  async function openThread(id) {
+    state.threadID = id;
+    $("thread").hidden = false;
+    renderThread();
+    try {
+      const { root, replies } = await api(`/api/v1/messages/${id}/thread`);
+      for (const m of [root, ...replies]) state.messages.set(m.id, m);
+      renderThread();
+      $("thread-messages").scrollTop = $("thread-messages").scrollHeight;
+      $("thread-text").focus();
+    } catch (e) { toast(e.message); }
+  }
+
+  async function send(textarea, threadID) {
+    const text = textarea.value;
+    if (!text.trim()) return;
+    const me = $("me").value.trim() || "human";
+    const channel = threadID ? state.messages.get(threadID)?.channel : state.current;
+    try {
+      const m = await api(`/api/v1/channels/${encodeURIComponent(channel)}/messages`, {
+        method: "POST",
+        body: JSON.stringify({ from: me, text, thread_id: threadID || undefined }),
+      });
+      textarea.value = "";
+      autosize(textarea);
+      onMessage(m);
+    } catch (e) { toast(e.message); }
+  }
+
+  function autosize(t) {
+    t.style.height = "auto";
+    t.style.height = Math.min(t.scrollHeight, 200) + "px";
+  }
+
+  function wireComposer(form, textarea, getThread) {
+    form.onsubmit = (e) => { e.preventDefault(); send(textarea, getThread()); };
+    textarea.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(textarea, getThread()); }
+    });
+    textarea.addEventListener("input", () => autosize(textarea));
+  }
+
+  // ---------- boot ----------
+
+  async function boot() {
+    $("me").value = state.me;
+    $("me").addEventListener("change", () => {
+      state.me = $("me").value.trim() || "human";
+      store.set("botchat.name", state.me);
+      renderMessages();
+    });
+    wireComposer($("composer"), $("text"), () => null);
+    wireComposer($("thread-composer"), $("thread-text"), () => state.threadID);
+    $("close-thread").onclick = () => { state.threadID = null; $("thread").hidden = true; };
+    $("menu").onclick = () => $("sidebar").classList.toggle("open");
+    window.addEventListener("hashchange", () => {
+      const name = decodeURIComponent(location.hash.slice(1));
+      if (name === state.current) return;
+      selectChannel(state.channels.has(name) ? name : "general");
+    });
+
+    fetch("/healthz").then((r) => r.json()).then((h) => { $("version").textContent = "botchat " + h.version; }, () => {});
+
+    try {
+      const { channels } = await api("/api/v1/channels");
+      for (const c of channels) state.channels.set(c.name, c);
+    } catch (e) { toast(e.message); }
+    reconnect();
+    await refreshAgents();
+    setInterval(refreshAgents, 15000);
+
+    const wanted = decodeURIComponent(location.hash.slice(1));
+    selectChannel(state.channels.has(wanted) ? wanted : "general");
+  }
+
+  boot();
+})();
