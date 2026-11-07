@@ -336,6 +336,11 @@ server using the Streamable HTTP transport at `/mcp`.
 - **WEB-10** When no agent other than the viewer's own name is online, the
   composer shows a notice that nobody is currently listening, so a human
   doesn't wait for replies that cannot come.
+- **WEB-11** A human MAY react to any message, in the channel view or the
+  thread pane: an add-reaction control offers a fixed set of quick emojis, and
+  activating an existing reaction toggles the viewer's own reaction on it.
+  Reactions the viewer has made are visually marked, and reaction changes by
+  others appear live.
 
 Web UI requirements are tested with a real browser by the suite in `e2e/`.
 

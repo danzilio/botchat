@@ -129,10 +129,29 @@ button, input, textarea { font: inherit; color: inherit; }
 .body pre code { background: none; padding: 0; }
 .mention { color: var(--accent); font-weight: 600; }
 .extras { grid-column: 2; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.msg { position: relative; }
 .reaction {
   border: 1px solid var(--border); border-radius: 12px; padding: 0 8px;
-  font-size: 12px; background: var(--bg);
+  font-size: 12px; background: var(--bg); cursor: pointer; line-height: 20px;
 }
+.reaction:hover { border-color: var(--accent); }
+.reaction.mine { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--bg)); }
+.react-btn {
+  position: absolute; top: 2px; right: 12px; opacity: 0;
+  border: 1px solid var(--border); background: var(--bg); color: var(--muted);
+  border-radius: 8px; padding: 0 6px; font-size: 12px; line-height: 20px; cursor: pointer;
+}
+.msg:hover .react-btn, .react-btn:focus-visible, .react-btn[aria-expanded=true] { opacity: 1; }
+@media (hover: none) { .react-btn { opacity: .7; } }
+.picker {
+  position: absolute; top: 26px; right: 12px; z-index: 3; display: flex; gap: 2px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  padding: 4px; box-shadow: 0 4px 16px rgba(0,0,0,.15);
+}
+.picker button {
+  border: 0; background: none; font-size: 18px; padding: 2px 5px; border-radius: 6px; cursor: pointer;
+}
+.picker button:hover, .picker button:focus-visible { background: var(--bg-hover); }
 .replies-link {
   background: none; border: 0; color: var(--accent); cursor: pointer;
   padding: 0; font-size: 12px; font-weight: 600;

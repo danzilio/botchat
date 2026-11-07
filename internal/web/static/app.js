@@ -218,13 +218,19 @@
     body.appendChild(renderText(m.text));
     el.appendChild(body);
 
+    const me = myName();
     const extras = document.createElement("div");
     extras.className = "extras";
     for (const [emoji, who] of Object.entries(m.reactions || {})) {
-      const r = document.createElement("span");
-      r.className = "reaction";
+      const mine = who.includes(me);
+      const r = document.createElement("button");
+      r.type = "button";
+      r.className = "reaction" + (mine ? " mine" : "");
       r.textContent = `${emoji} ${who.length}`;
       r.title = who.join(", ");
+      r.setAttribute("aria-pressed", String(mine));
+      r.setAttribute("aria-label", `${emoji} reaction from ${who.join(", ")}`);
+      r.onclick = (e) => { e.stopPropagation(); react(m.id, emoji, !mine); };
       extras.appendChild(r);
     }
     if (!inThread && m.reply_count) {
@@ -235,8 +241,58 @@
       extras.appendChild(b);
     }
     if (extras.childNodes.length) el.appendChild(extras);
+
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "react-btn";
+    add.textContent = "☺+";
+    add.title = "Add reaction";
+    add.setAttribute("aria-label", "Add reaction");
+    add.setAttribute("aria-expanded", "false");
+    add.onclick = (e) => {
+      e.stopPropagation();
+      const open = el.querySelector(".picker");
+      document.querySelectorAll(".picker").forEach((p) => p.remove());
+      document.querySelectorAll(".react-btn[aria-expanded=true]").forEach((b) => b.setAttribute("aria-expanded", "false"));
+      if (open) return;
+      const picker = document.createElement("div");
+      picker.className = "picker";
+      picker.setAttribute("role", "menu");
+      for (const emoji of QUICK_REACTIONS) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = emoji;
+        b.setAttribute("role", "menuitem");
+        b.setAttribute("aria-label", "React with " + emoji);
+        b.onclick = (ev) => {
+          ev.stopPropagation();
+          picker.remove();
+          const mine = (m.reactions?.[emoji] || []).includes(myName());
+          if (!mine) react(m.id, emoji, true);
+        };
+        picker.appendChild(b);
+      }
+      el.appendChild(picker);
+      add.setAttribute("aria-expanded", "true");
+      picker.querySelector("button").focus();
+    };
+    el.appendChild(add);
     if (!inThread) el.ondblclick = () => openThread(m.id);
     return el;
+  }
+
+  const QUICK_REACTIONS = ["👍", "✅", "👀", "❤️", "🎉", "😄"];
+
+  function myName() { return $("me").value.trim() || "human"; }
+
+  async function react(id, emoji, add) {
+    try {
+      const m = await api(`/api/v1/messages/${id}/reactions`, {
+        method: add ? "PUT" : "DELETE",
+        body: JSON.stringify({ from: myName(), emoji }),
+      });
+      updateMessage(m);
+    } catch (e) { toast(e.message); }
   }
 
   function nearBottom(el) { return el.scrollHeight - el.scrollTop - el.clientHeight < 80; }
@@ -341,7 +397,7 @@
   }
 
   function renderListeners() {
-    const me = ($("me").value.trim() || "human");
+    const me = myName();
     const listening = [...state.agents.values()].some((a) => a.online && a.name !== me);
     $("no-listeners").hidden = listening;
   }
@@ -432,6 +488,10 @@
     wireComposer($("thread-composer"), $("thread-text"), () => state.threadID);
     $("close-thread").onclick = () => { state.threadID = null; $("thread").hidden = true; };
     $("menu").onclick = () => $("sidebar").classList.toggle("open");
+    document.addEventListener("click", () => document.querySelectorAll(".picker").forEach((p) => p.remove()));
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") document.querySelectorAll(".picker").forEach((p) => p.remove());
+    });
     window.addEventListener("hashchange", () => {
       const name = decodeURIComponent(location.hash.slice(1));
       if (name === state.current) return;

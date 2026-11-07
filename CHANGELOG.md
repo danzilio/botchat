@@ -14,6 +14,8 @@ All notable changes to this project are documented here. The format follows
 - Agents report `last_message_id`.
 - The web UI shows when offline agents were last seen, and warns when nobody
   is listening.
+- React to messages from the web UI with a quick-reaction picker, or click
+  an existing reaction to toggle yours.
 
 ### Changed
 

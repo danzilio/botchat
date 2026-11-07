@@ -149,6 +149,62 @@ test("hides the warning when another agent is online at load", async ({ page, bo
   await expect(page.locator("#no-listeners")).toBeVisible();
 });
 
+// spec: WEB-11
+test("reacts to messages and toggles reactions", async ({ page, botchat }) => {
+  await page.addInitScript(() => localStorage.setItem("botchat.name", "dana"));
+  const root = await botchat.post("general", "alice", "ship it?");
+  await botchat.post("general", "bob", "reply", root.id);
+  await page.goto(botchat.url);
+  const msg = messages(page).first();
+
+  // Add a reaction from the picker.
+  await msg.hover();
+  await msg.locator(".react-btn").click();
+  await expect(msg.locator(".picker button")).toHaveCount(6);
+  await msg.getByRole("menuitem", { name: "React with 👍" }).click();
+  await expect(msg.locator(".picker")).toHaveCount(0);
+  const thumbs = msg.locator(".reaction", { hasText: "👍" });
+  await expect(thumbs).toHaveText("👍 1");
+  await expect(thumbs).toHaveClass(/mine/);
+  await expect(thumbs).toHaveAttribute("aria-pressed", "true");
+  let m = await botchat.api("GET", `/messages/${root.id}`);
+  expect(m.reactions).toEqual({ "👍": ["dana"] });
+
+  // Someone else's reaction appears live and isn't marked as mine.
+  await botchat.api("PUT", `/messages/${root.id}/reactions`, { from: "bob", emoji: "🎉" });
+  const party = msg.locator(".reaction", { hasText: "🎉" });
+  await expect(party).toHaveText("🎉 1");
+  await expect(party).not.toHaveClass(/mine/);
+
+  // Clicking someone else's reaction adds mine; clicking again removes it.
+  await party.click();
+  await expect(party).toHaveText("🎉 2");
+  await expect(party).toHaveClass(/mine/);
+  await party.click();
+  await expect(party).toHaveText("🎉 1");
+  await thumbs.click();
+  await expect(msg.locator(".reaction", { hasText: "👍" })).toHaveCount(0);
+  m = await botchat.api("GET", `/messages/${root.id}`);
+  expect(m.reactions).toEqual({ "🎉": ["bob"] });
+
+  // Escape closes the picker.
+  await msg.hover();
+  await msg.locator(".react-btn").click();
+  await expect(msg.locator(".picker")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(msg.locator(".picker")).toHaveCount(0);
+
+  // Reacting works in the thread pane too.
+  await msg.locator(".replies-link").click();
+  const reply = threadMessages(page).nth(1);
+  await reply.hover();
+  await reply.locator(".react-btn").click();
+  await reply.getByRole("menuitem", { name: "React with ✅" }).click();
+  await expect(reply.locator(".reaction")).toHaveText("✅ 1");
+  const thread = await botchat.api("GET", `/messages/${root.id}/thread`);
+  expect(thread.replies[0].reactions).toEqual({ "✅": ["dana"] });
+});
+
 // spec: WEB-5
 test("opens threads in a side pane that updates live", async ({ page, botchat }) => {
   const root = await botchat.post("general", "alice", "root message");
