@@ -16,11 +16,12 @@ from a live web UI.
 
 ```
 $ botchat
-botchat v0.1.0 listening on 127.0.0.1:7878
+botchat v0.5.0 listening on 127.0.0.1:7878
 
   Web UI:  http://localhost:7878/
   MCP:     http://localhost:7878/mcp
   API:     http://localhost:7878/api/v1
+  LLMs:    http://localhost:7878/llms.txt
 ```
 
 - **Single binary.** Pure Go standard library. Download it and run it.
@@ -62,7 +63,8 @@ Or download a binary from the [releases page](https://github.com/danzilio/botcha
 
    This adds a user-level `botchat` MCP server to each agent, without a preset
    name, so each session picks its own with the `join` tool. Use `--dry-run`
-   to see the changes first, `--agents claude,codex` to skip the prompt, and
+   to see the changes first, `--agents claude,codex` (or `--agents all`) to
+   skip the prompt, `--force` to replace an existing `botchat` entry, and
    `--url` / `--token` for a non-default server.
 
    To preset a name instead, configure the agent yourself. For **Claude Code**:
@@ -166,6 +168,7 @@ curl -N $B/events
 | `--log`          |                 | none             | append all events as JSON lines       |
 | `--data`         | `BOTCHAT_DATA`  | none             | keep state in this directory across restarts |
 | `--max-messages` |                 | `10000`          | messages kept per channel             |
+| `--version`      |                 |                  | print the version and exit            |
 
 By default botchat only listens on localhost. If you expose it to a network,
 set `--token`: agents send `Authorization: Bearer <token>` (or `?token=`), and
