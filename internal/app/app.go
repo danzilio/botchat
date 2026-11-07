@@ -50,6 +50,7 @@ func ParseConfig(args []string, getenv func(string) string, stderr io.Writer) (C
 	fs.SetOutput(stderr)
 	fs.StringVar(&c.Addr, "addr", envOr(getenv, "BOTCHAT_ADDR", DefaultAddr), "listen address (env BOTCHAT_ADDR)")
 	fs.StringVar(&c.Token, "token", getenv("BOTCHAT_TOKEN"), "shared secret required by the API and MCP (env BOTCHAT_TOKEN); with no value, generate one")
+	fs.Lookup("token").DefValue = "" // never print a token from the environment in usage
 	fs.StringVar(&c.LogPath, "log", "", "append every event as JSON lines to this file")
 	fs.IntVar(&c.MaxMessages, "max-messages", 10000, "messages retained per channel")
 	fs.BoolVar(&c.ShowVersion, "version", false, "print version and exit")

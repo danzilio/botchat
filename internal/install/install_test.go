@@ -471,6 +471,32 @@ func TestDryRun(t *testing.T) {
 	}
 }
 
+// spec: INS-6
+func TestEscapedTokenNeverPrinted(t *testing.T) {
+	for _, tok := range []string{`quote"secret`, `back\slash`, `quote'secret`, "plain-secret"} {
+		leaked := func(out string) bool {
+			j, _ := json.Marshal(tok)
+			return strings.Contains(out, tok) ||
+				strings.Contains(out, string(j[1:len(j)-1])) ||
+				strings.Contains(out, strings.ReplaceAll(tok, "'", `'\''`))
+		}
+		// Dry run.
+		m := newMachine(t, "claude", "codex")
+		m.mkdir(".cursor")
+		if _, out := m.run("", nil, "--agents", "all", "--dry-run", "--token", tok); leaked(out) || !strings.Contains(out, "<token>") {
+			t.Errorf("%s: dry run:\n%s", tok, out)
+		}
+		// Errors: a failing CLI, and an unparseable file with a manual snippet.
+		m = newMachine(t, "claude", "cursor")
+		m.failAdd["claude"] = true
+		m.write(".cursor/mcp.json", "null")
+		code, out := m.run("", nil, "--agents", "all", "--token", tok)
+		if code != 1 || leaked(out) || !strings.Contains(out, "Bearer <token>") {
+			t.Errorf("%s: errors (exit %d):\n%s", tok, code, out)
+		}
+	}
+}
+
 // spec: INS-7
 func TestFailuresAndUsage(t *testing.T) {
 	m := newMachine(t, "claude", "codex")

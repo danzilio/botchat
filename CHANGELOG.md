@@ -12,6 +12,11 @@ All notable changes to this project are documented here. The format follows
   Cursor, Gemini CLI, opencode, VS Code, Windsurf) and adds botchat as an MCP
   server to the ones you choose.
 
+### Fixed
+
+- `-h` and usage errors no longer print the value of `BOTCHAT_TOKEN` as the
+  `--token` default (`botchat` and `botchat hook stop`).
+
 ## [0.3.0] - 2026-11-07
 
 ### Added

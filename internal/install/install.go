@@ -33,6 +33,15 @@ type Config struct {
 	DryRun bool
 }
 
+// shown is the config to use for anything printed: the token is replaced by
+// a placeholder before any JSON or shell quoting can escape it.
+func (c Config) shown() Config {
+	if c.Token != "" {
+		c.Token = "<token>"
+	}
+	return c
+}
+
 // MCPURL is the MCP endpoint the installed entries point at.
 func (c Config) MCPURL() string { return c.URL + "/mcp" }
 
@@ -100,6 +109,7 @@ func parse(args []string, getenv func(string) string, stderr io.Writer) (Config,
 	}
 	fs.StringVar(&c.URL, "url", def("BOTCHAT_URL", DefaultURL), "botchat server URL (env BOTCHAT_URL)")
 	fs.StringVar(&c.Token, "token", getenv("BOTCHAT_TOKEN"), "server token, if it requires one (env BOTCHAT_TOKEN)")
+	fs.Lookup("token").DefValue = "" // never print a token from the environment in usage
 	fs.StringVar(&c.Agents, "agents", "", "comma-separated agent IDs to install into, or \"all\"; skips the prompt")
 	fs.BoolVar(&c.Force, "force", false, "replace an existing botchat entry")
 	fs.BoolVar(&c.DryRun, "dry-run", false, "show what would change without changing anything")
@@ -195,7 +205,7 @@ func run(ctx context.Context, cfg Config, env Env) int {
 			continue
 		}
 		if cfg.DryRun {
-			fmt.Fprintf(out, "%s: would %s\n", a.Name, indent(redact(a.plan(env, cfg, d.installed), cfg.Token)))
+			fmt.Fprintf(out, "%s: would %s\n", a.Name, indent(a.plan(env, cfg.shown(), d.installed)))
 			continue
 		}
 		msg, err := a.install(ctx, env, cfg, d.installed)
@@ -318,11 +328,21 @@ func plural(n int) string {
 	return "s"
 }
 
+// redact hides token in text we didn't format ourselves, such as an agent
+// CLI's output, in its raw, JSON-escaped and shell-quoted forms.
 func redact(s, token string) string {
 	if token == "" {
 		return s
 	}
-	return strings.ReplaceAll(s, token, "<token>")
+	j, _ := marshal(token)
+	for _, form := range []string{
+		string(j[1 : len(j)-1]),
+		strings.ReplaceAll(token, "'", `'\''`),
+		token,
+	} {
+		s = strings.ReplaceAll(s, form, "<token>")
+	}
+	return s
 }
 
 func indent(s string) string {

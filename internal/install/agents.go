@@ -214,7 +214,7 @@ func (a *agent) install(ctx context.Context, env Env, cfg Config, replace bool) 
 		}
 		args := a.cli.add(cfg)
 		if out, err := runNeutral(ctx, env, path, args...); err != nil {
-			return "", fmt.Errorf("%s: %v\n%s", cmdline(a.cli.bin, args), err, strings.TrimSpace(out))
+			return "", fmt.Errorf("%s: %v\n%s", cmdline(a.cli.bin, a.cli.add(cfg.shown())), err, redact(strings.TrimSpace(out), cfg.Token))
 		}
 		verb := "added"
 		if replace {
@@ -228,7 +228,11 @@ func (a *agent) install(ctx context.Context, env Env, cfg Config, replace bool) 
 func (a *agent) installFile(env Env, cfg Config) (string, error) {
 	path := a.file.path(env)
 	manual := func(err error) error {
-		return fmt.Errorf("%s: %v\nAdd this by hand:\n%s", path, err, a.snippet(cfg))
+		hint := ""
+		if cfg.Token != "" {
+			hint = ", with your token in place of <token>"
+		}
+		return fmt.Errorf("%s: %v\nAdd this by hand%s:\n%s", path, err, hint, a.snippet(cfg.shown()))
 	}
 	obj, err := readObject(path)
 	if err != nil {

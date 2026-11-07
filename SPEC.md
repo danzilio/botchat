@@ -57,6 +57,8 @@ decisions; any of them can change through a spec proposal (see
   precedence over the environment, which takes precedence over the default.
 - **CLI-3** `--token` / `BOTCHAT_TOKEN` sets a shared secret that enables
   authentication (see API-4), with the same precedence rules as CLI-2.
+  Usage output (of botchat and its subcommands) never shows a token taken
+  from `BOTCHAT_TOKEN`.
 - **CLI-4** `--version` prints `botchat <version>` to stdout and exits 0.
   Unknown flags print usage to stderr and exit 2.
 - **CLI-5** On startup botchat prints a banner to stdout containing the web
@@ -144,7 +146,9 @@ use it.
   the entry is replaced. Project- or local-scoped entries don't count and
   are never modified: agent CLIs are run from an empty temporary directory.
 - **INS-6** `--dry-run` prints what would be run or written for each
-  selected agent and changes nothing.
+  selected agent and changes nothing. Nothing the installer prints (dry
+  run, results, errors, usage) contains the token, in any escaped form; it
+  shows `<token>` instead.
 - **INS-7** It reports the outcome for each selected agent and exits 1 if
   any of them failed, 0 otherwise. Unknown flags or arguments exit 2.
 
