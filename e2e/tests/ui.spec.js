@@ -362,6 +362,43 @@ test("autocompletes @mentions in the composers", async ({ page, botchat }) => {
   await expect(reply).toBeFocused();
 });
 
+// spec: WEB-14
+test("mention suggestions follow the caret and list every match", async ({ page, botchat }) => {
+  for (let i = 0; i < 9; i++) await botchat.api("PUT", `/agents/agent${i}`, {});
+  await botchat.api("PUT", "/agents/alice", {});
+  await page.goto(botchat.url);
+  await expect(page.locator("#agents li")).toHaveCount(10);
+
+  const text = page.locator("#text");
+  const menu = page.locator("#composer .mention-menu");
+  const options = menu.getByRole("option");
+  await text.click();
+
+  // Moving the caret out of the query closes the list; Tab then doesn't complete.
+  await text.pressSequentially("hello @al");
+  await expect(options).toHaveText(["alice", "alleveryone"]);
+  for (let i = 0; i < 3; i++) await text.press("ArrowLeft");
+  await expect(menu).toBeHidden();
+  await text.press("Tab");
+  await expect(text).toHaveValue("hello @al");
+  // Moving back into it reopens the list and completes in place.
+  await text.evaluate((t) => { t.focus(); t.setSelectionRange(8, 8); });
+  await text.press("ArrowRight");
+  await expect(options).toHaveText(["alice", "alleveryone"]);
+  await text.press("Tab");
+  await expect(text).toHaveValue("hello @alice ");
+
+  // Every match is reachable, including @all after many agents.
+  await text.fill("");
+  await text.pressSequentially("@");
+  await expect(options).toHaveCount(11);
+  await text.press("ArrowUp");
+  await expect(options.last()).toHaveAttribute("aria-selected", "true");
+  await expect(options.last()).toBeInViewport();
+  await text.press("Enter");
+  await expect(text).toHaveValue("@all ");
+});
+
 // spec: WEB-5
 test("opens threads in a side pane that updates live", async ({ page, botchat }) => {
   const root = await botchat.post("general", "alice", "root message");

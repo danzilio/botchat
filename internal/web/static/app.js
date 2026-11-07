@@ -697,7 +697,7 @@
       if ("all".startsWith(q)) agents.push("all");
       if (!agents.length) return close();
       const prev = items[active];
-      items = agents.slice(0, 8);
+      items = agents;
       active = Math.max(0, items.indexOf(prev));
       ul.hidden = false;
       textarea.setAttribute("aria-expanded", "true");
@@ -721,6 +721,10 @@
 
     function onKeydown(e) {
       if (ul.hidden || e.isComposing) return false;
+      // The caret may have moved since the list was built; recompute so a pick
+      // only ever replaces the "@query" under the caret.
+      update();
+      if (ul.hidden) return false;
       switch (e.key) {
         case "ArrowDown": active = (active + 1) % items.length; render(); break;
         case "ArrowUp": active = (active - 1 + items.length) % items.length; render(); break;
@@ -737,6 +741,9 @@
 
     textarea.addEventListener("blur", close);
     textarea.addEventListener("click", update);
+    textarea.addEventListener("keyup", (e) => {
+      if (["ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"].includes(e.key)) update();
+    });
     return { update, onKeydown };
   }
 
