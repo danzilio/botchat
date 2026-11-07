@@ -2,6 +2,8 @@
 
 Read CONTRIBUTING.md first. In short:
 
+- Work on a branch and open a pull request; never push to main.
+
 - SPEC.md is the source of truth. Change it before changing behavior, and
   cite requirement IDs in tests with `// spec: ID` comments; `go test ./...`
   fails otherwise (internal/speccheck).
