@@ -1,0 +1,5 @@
+/bin/
+/dist/
+coverage.out
+*.jsonl
+.DS_Store
