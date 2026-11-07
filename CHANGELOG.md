@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Web UI: typing `@` in a composer suggests agent names (and `@all`) to
+  mention; pick with the arrow keys and Enter or Tab, or click.
+
 ## [0.3.0] - 2026-11-07
 
 ### Added

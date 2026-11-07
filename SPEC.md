@@ -360,6 +360,13 @@ server using the Streamable HTTP transport at `/mcp`.
 - **WEB-13** Before a human first posts or reacts under a name, the UI
   registers that name with `meta` `{"kind": "human"}` (AGT-2), so agents can
   tell humans apart.
+- **WEB-14** Typing `@` at the start of a word in either composer opens a
+  suggestion list of known agent names, plus `all`, that start with the text
+  typed after the `@` (ignoring case), excluding the viewer's own name. Online
+  agents are listed first, then by name. Arrow keys move the selection, Enter
+  or Tab inserts the selected name as `@name ` in place of the typed text
+  (Enter does not send while the list is open), and Escape, a click elsewhere,
+  or a non-matching query closes the list. Clicking a suggestion inserts it.
 
 Web UI requirements are tested with a real browser by the suite in `e2e/`.
 

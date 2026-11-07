@@ -299,6 +299,69 @@ test("registers the viewer as a human before acting", async ({ page, botchat }) 
   expect((await botchat.api("GET", `/messages/${m.id}`)).reactions).toEqual({ "👍": ["lee"] });
 });
 
+// spec: WEB-14
+test("autocompletes @mentions in the composers", async ({ page, botchat }) => {
+  await page.addInitScript(() => localStorage.setItem("botchat.name", "dana"));
+  await botchat.post("general", "alice", "hello");
+  for (const name of ["albert", "bob", "dana"]) await botchat.api("PUT", `/agents/${name}`, {});
+  await page.goto(botchat.url);
+  await expect(page.locator("#agents li")).toHaveCount(4);
+
+  const text = page.locator("#text");
+  const menu = page.locator("#composer .mention-menu");
+  const options = menu.getByRole("option");
+  await text.click();
+  await text.pressSequentially("hi @");
+  // Everyone but the viewer, plus @all.
+  await expect(options).toHaveText(["albert", "alice", "bob", "alleveryone"]);
+  await text.pressSequentially("AL");
+  await expect(options).toHaveText(["albert", "alice", "alleveryone"]);
+  await expect(options.first()).toHaveAttribute("aria-selected", "true");
+  await text.press("ArrowDown");
+  await expect(options.nth(1)).toHaveAttribute("aria-selected", "true");
+  // Enter picks instead of sending.
+  await text.press("Enter");
+  await expect(menu).toBeHidden();
+  await expect(text).toHaveValue("hi @alice ");
+  await expect(messages(page)).toHaveCount(1);
+
+  // Tab picks too; the viewer's own name and non-matches close the list.
+  await text.pressSequentially("and @b");
+  await text.press("Tab");
+  await expect(text).toHaveValue("hi @alice and @bob ");
+  await text.pressSequentially("@da");
+  await expect(menu).toBeHidden();
+  await text.press("Backspace");
+  await text.press("Backspace");
+  await expect(menu).toBeVisible();
+  await text.press("Escape");
+  await expect(menu).toBeHidden();
+  await text.press("Backspace");
+  // An @ inside a word (an email address) doesn't trigger it.
+  await text.pressSequentially("mail me@a");
+  await expect(menu).toBeHidden();
+  await text.fill("");
+
+  // Enter sends once the list is closed.
+  await text.pressSequentially("@bo");
+  await expect(options).toHaveText(["bob"]);
+  await text.press("Enter");
+  await text.pressSequentially("ping");
+  await text.press("Enter");
+  await expect(messages(page).last().locator(".body")).toHaveText("@bob ping");
+  const { messages: sent } = await botchat.api("GET", "/channels/general/messages");
+  expect(sent.at(-1).mentions).toEqual(["bob"]);
+
+  // The thread composer completes too, and suggestions can be clicked.
+  await messages(page).first().dblclick();
+  const reply = page.locator("#thread-text");
+  await reply.click();
+  await reply.pressSequentially("thanks @alb");
+  await page.locator("#thread-composer .mention-menu").getByRole("option", { name: "albert" }).click();
+  await expect(reply).toHaveValue("thanks @albert ");
+  await expect(reply).toBeFocused();
+});
+
 // spec: WEB-5
 test("opens threads in a side pane that updates live", async ({ page, botchat }) => {
   const root = await botchat.post("general", "alice", "root message");

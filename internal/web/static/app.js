@@ -615,11 +615,129 @@
   }
 
   function wireComposer(form, textarea, getThread) {
+    const complete = mentionAutocomplete(form, textarea);
     form.onsubmit = (e) => { e.preventDefault(); send(textarea, getThread()); };
     textarea.addEventListener("keydown", (e) => {
+      if (complete.onKeydown(e)) return;
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(textarea, getThread()); }
     });
-    textarea.addEventListener("input", () => autosize(textarea));
+    textarea.addEventListener("input", () => { autosize(textarea); complete.update(); });
+  }
+
+  // ---------- @mention autocomplete (WEB-14) ----------
+
+  let menuSeq = 0;
+  function mentionAutocomplete(form, textarea) {
+    const ul = document.createElement("ul");
+    ul.className = "mention-menu";
+    ul.id = "mention-menu-" + ++menuSeq;
+    ul.setAttribute("role", "listbox");
+    ul.setAttribute("aria-label", "Mention suggestions");
+    ul.hidden = true;
+    form.appendChild(ul);
+    textarea.setAttribute("aria-autocomplete", "list");
+    textarea.setAttribute("aria-controls", ul.id);
+    textarea.setAttribute("aria-expanded", "false");
+
+    let items = [];
+    let active = 0;
+    let start = -1; // index of the "@" being completed
+
+    function query() {
+      if (textarea.selectionStart !== textarea.selectionEnd) return null;
+      const before = textarea.value.slice(0, textarea.selectionStart);
+      const m = before.match(/(?:^|[^A-Za-z0-9_@-])@([A-Za-z0-9_-]*)$/);
+      if (!m) return null;
+      start = before.length - m[1].length - 1;
+      return m[1].toLowerCase();
+    }
+
+    function close() {
+      ul.hidden = true;
+      items = [];
+      textarea.setAttribute("aria-expanded", "false");
+      textarea.removeAttribute("aria-activedescendant");
+    }
+
+    function render() {
+      ul.replaceChildren();
+      items.forEach((name, i) => {
+        const li = document.createElement("li");
+        li.id = `${ul.id}-${i}`;
+        li.setAttribute("role", "option");
+        li.setAttribute("aria-selected", String(i === active));
+        const agent = state.agents.get(name);
+        const dot = document.createElement("span");
+        dot.className = "dot" + (agent?.online ? " on" : "");
+        if (!agent) dot.style.visibility = "hidden";
+        const label = document.createElement("span");
+        label.textContent = name;
+        li.append(dot, label);
+        if (name === "all") {
+          const hint = document.createElement("span");
+          hint.className = "muted small";
+          hint.textContent = "everyone";
+          li.appendChild(hint);
+        }
+        li.onmousedown = (e) => { e.preventDefault(); pick(i); };
+        ul.appendChild(li);
+      });
+      textarea.setAttribute("aria-activedescendant", `${ul.id}-${active}`);
+      ul.children[active]?.scrollIntoView({ block: "nearest" });
+    }
+
+    function update() {
+      const q = query();
+      if (q === null) return close();
+      const me = myName();
+      const agents = [...state.agents.values()]
+        .filter((a) => a.name !== me && a.name.toLowerCase().startsWith(q))
+        .sort((a, b) => (b.online - a.online) || a.name.localeCompare(b.name))
+        .map((a) => a.name);
+      if ("all".startsWith(q)) agents.push("all");
+      if (!agents.length) return close();
+      const prev = items[active];
+      items = agents.slice(0, 8);
+      active = Math.max(0, items.indexOf(prev));
+      ul.hidden = false;
+      textarea.setAttribute("aria-expanded", "true");
+      render();
+    }
+
+    function pick(i) {
+      const name = items[i];
+      if (!name) return;
+      const v = textarea.value;
+      const end = textarea.selectionStart;
+      const rest = v.slice(end);
+      const insert = "@" + name + (/^\s/.test(rest) ? "" : " ");
+      textarea.value = v.slice(0, start) + insert + rest;
+      const caret = start + insert.length + (/^\s/.test(rest) ? 1 : 0);
+      textarea.setSelectionRange(caret, caret);
+      textarea.focus();
+      close();
+      autosize(textarea);
+    }
+
+    function onKeydown(e) {
+      if (ul.hidden || e.isComposing) return false;
+      switch (e.key) {
+        case "ArrowDown": active = (active + 1) % items.length; render(); break;
+        case "ArrowUp": active = (active - 1 + items.length) % items.length; render(); break;
+        case "Enter": case "Tab":
+          if (e.shiftKey) return false;
+          pick(active);
+          break;
+        case "Escape": close(); e.stopPropagation(); break;
+        default: return false;
+      }
+      e.preventDefault();
+      return true;
+    }
+
+    textarea.addEventListener("blur", close);
+    textarea.addEventListener("click", update);
+    return { update, onKeydown };
   }
 
   // ---------- boot ----------

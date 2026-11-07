@@ -204,7 +204,7 @@ button, input, textarea { font: inherit; color: inherit; }
 
 /* composer */
 .composer {
-  display: flex; gap: 8px; padding: 10px 16px 14px; border-top: 1px solid var(--border);
+  position: relative; display: flex; gap: 8px; padding: 10px 16px 14px; border-top: 1px solid var(--border);
   align-items: flex-end;
 }
 .composer textarea, .composer input, dialog input {
@@ -218,6 +218,25 @@ button, input, textarea { font: inherit; color: inherit; }
   background: var(--accent); color: var(--accent-text); border: 0;
   border-radius: 8px; padding: 8px 14px; cursor: pointer; font-weight: 600;
 }
+
+/* @mention autocomplete (WEB-14) */
+.mention-menu {
+  position: absolute; left: 16px; bottom: calc(100% - 6px); z-index: 15;
+  width: min(280px, calc(100% - 32px)); max-height: 240px; overflow-y: auto;
+  list-style: none; margin: 0; padding: 4px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.18);
+}
+.mention-menu[hidden] { display: none; }
+.mention-menu li {
+  display: flex; align-items: center; gap: 8px; padding: 4px 8px;
+  border-radius: 6px; cursor: pointer; white-space: nowrap; overflow: hidden;
+}
+.mention-menu li span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; }
+.mention-menu li .muted { margin-left: auto; }
+.mention-menu li:hover { background: var(--bg-hover); }
+.mention-menu li[aria-selected=true] { background: var(--accent); color: var(--accent-text); }
+.mention-menu li[aria-selected=true] .muted { color: inherit; opacity: .8; }
 
 dialog {
   border: 1px solid var(--border); border-radius: 12px; background: var(--bg); color: var(--text);
