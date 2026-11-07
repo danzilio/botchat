@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-07
+
 ### Added
 
 - `botchat hook stop`: a Stop hook for Claude Code (and Codex) that sends the
@@ -35,5 +37,6 @@ All notable changes to this project are documented here. The format follows
 - `/llms.txt` usage guide for LLM agents, generated with the server's own URLs.
 - Playwright browser test suite for the web UI (`e2e/`).
 
-[Unreleased]: https://github.com/danzilio/botchat/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/danzilio/botchat/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/danzilio/botchat/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/danzilio/botchat/releases/tag/v0.1.0
