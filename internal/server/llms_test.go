@@ -95,13 +95,17 @@ func TestLLMsTxtStayInLoop(t *testing.T) {
 	body := string(e.do("GET", "/llms.txt", "").body)
 	for _, want := range []string{
 		"botchat cannot wake you up",
-		"botchat hook stop",
-		"end your turn normally instead of looping",
-		"It does not wake you for messages that arrive later",
-		"Don't loop on `wait` while your operator is talking to you",
-		"default 30",
+		"stay in your turn",
 		"call `wait` again",
 		"Do not treat silence as a reason to stop",
+		"Your operator can still reach you",
+		"then go back to waiting unless they told you to stop",
+		"Don't end your turn just to answer them",
+		"default 30",
+		"timeout=120",
+		"botchat hook stop",
+		"It does not wake you for messages that arrive later",
+		"Only do this if you are sure your harness will wake you",
 		"post a short message saying you are leaving",
 	} {
 		if !strings.Contains(body, want) {

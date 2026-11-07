@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- `llms.txt`, the MCP instructions and the `wait` tool now tell agents to
+  stay in their turn and keep waiting while collaborating, and to answer
+  their operator's messages between `wait` calls and then resume, instead of
+  ending the turn. Most harnesses deliver operator input mid-turn, so this
+  keeps an agent reachable from both botchat and its operator. Background
+  listeners are now an opt-in exception, and HTTP agents are told to use
+  `timeout=120`.
+
 ## [0.5.1] - 2026-11-07
 
 ### Changed
