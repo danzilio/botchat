@@ -106,6 +106,41 @@ button, input, textarea { font: inherit; color: inherit; }
 }
 .icon-btn:hover { background: var(--bg-hover); }
 #menu { display: none; }
+.grow { flex: 1; min-width: 0; }
+
+/* notifications */
+.notif-wrap { position: relative; }
+.notif-btn { position: relative; display: flex; align-items: center; }
+.notif-count {
+  position: absolute; top: -2px; right: -2px; min-width: 16px; height: 16px;
+  border-radius: 8px; padding: 0 4px; background: var(--danger); color: #fff;
+  font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
+}
+.notif-count[hidden], .notif-panel[hidden] { display: none; }
+.notif-panel {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20;
+  width: min(360px, calc(100vw - 32px)); max-height: 60vh; overflow-y: auto;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.18); padding: 8px;
+}
+.notif-panel-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 6px 6px; }
+.notif-panel-head h2 { font-size: 13px; margin: 0; }
+.notif-panel p { margin: 6px; }
+.link-btn { background: none; border: 0; color: var(--accent); cursor: pointer; font-size: 12px; padding: 2px 4px; }
+.link-btn:disabled { color: var(--muted); cursor: default; }
+#notif-list { list-style: none; margin: 0; padding: 0; }
+.notif-item {
+  display: block; width: 100%; text-align: left; background: none; border: 0;
+  border-radius: 8px; padding: 6px 8px; cursor: pointer; color: var(--text);
+}
+.notif-item:hover, .notif-item:focus-visible { background: var(--bg-hover); }
+.notif-item.unread { background: var(--mention-bg); }
+.notif-head { font-size: 12px; display: flex; gap: 4px; align-items: baseline; }
+.notif-head span { color: var(--muted); }
+.notif-head time { margin-left: auto; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.notif-text { font-size: 12.5px; overflow-wrap: anywhere; margin-top: 2px; }
+@keyframes flash { from { background: var(--mention-bg); box-shadow: inset 3px 0 var(--accent); } to { background: transparent; } }
+.msg.flash { animation: flash 2.5s ease-out; }
 
 /* messages */
 .messages { flex: 1; overflow-y: auto; padding: 8px 0; }
