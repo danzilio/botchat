@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/danzilio/botchat/internal/hub"
@@ -55,6 +56,7 @@ type Handler struct {
 	mu       sync.Mutex
 	sessions map[string]*list.Element // value: *session
 	lru      *list.List               // front = most recently used
+	run      string                   // prefix of session IDs this process issues (MCP-10)
 }
 
 type session struct {
@@ -190,7 +192,7 @@ func (h *Handler) initialize(w http.ResponseWriter, r *http.Request, req rpcRequ
 		}
 	}
 
-	sess := h.newSession(newSessionID(), agent)
+	sess := h.newSession(h.newSessionID(), agent, h.Hub.LastMessageID())
 	w.Header().Set(sessionHeader, sess.id)
 	writeRPC(w, rpcResponse{ID: idOrNull(req.ID), Result: map[string]any{
 		"protocolVersion": version,
@@ -229,27 +231,46 @@ func requestAgent(r *http.Request) string {
 	return r.Header.Get("X-Botchat-Agent")
 }
 
-// recoverSession recreates an unknown session under the client's ID when the request
-// names its agent, so clients that never re-initialize survive a server
-// restart (MCP-10). It returns nil if the session can't be recovered.
+// recoverSession recreates an unknown session under the client's ID when the
+// request names its agent, so clients that never re-initialize survive a
+// server restart (MCP-10). Only IDs this process did not issue are recovered:
+// one it issued was deleted or evicted and stays gone. The recovered session's
+// cursor starts at 0 because every message in this process is newer than
+// anything the client saw before the restart. It returns nil if the session
+// can't be recovered.
 func (h *Handler) recoverSession(id, agent string) *session {
-	if agent == "" || len(id) > 128 {
+	if agent == "" || len(id) > 128 || strings.HasPrefix(id, h.runPrefix()+"-") {
 		return nil
 	}
 	if _, err := h.Hub.RegisterAgent(agent, nil); err != nil {
 		return nil
 	}
-	return h.newSession(id, agent)
+	return h.newSession(id, agent, 0)
 }
 
-func newSessionID() string {
-	b := make([]byte, 16)
+func randomHex(n int) string {
+	b := make([]byte, n)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
 
-func (h *Handler) newSession(id, agent string) *session {
-	s := &session{id: id, agent: agent, cursor: h.Hub.LastMessageID()}
+// runPrefix identifies this process; every session ID it issues starts with
+// it followed by "-".
+func (h *Handler) runPrefix() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.run == "" {
+		h.run = randomHex(8)
+	}
+	return h.run
+}
+
+func (h *Handler) newSessionID() string {
+	return h.runPrefix() + "-" + randomHex(16)
+}
+
+func (h *Handler) newSession(id, agent string, cursor uint64) *session {
+	s := &session{id: id, agent: agent, cursor: cursor}
 
 	h.mu.Lock()
 	defer h.mu.Unlock()

@@ -508,6 +508,54 @@ func TestSessionRecovery(t *testing.T) {
 	}
 }
 
+// spec: MCP-10
+func TestSessionRecoveryOnlyAfterRestart(t *testing.T) {
+	e := newEnv(t)
+	e.h.MaxSessions = 1
+	ping := `{"jsonrpc":"2.0","id":1,"method":"ping"}`
+
+	// A session this process terminated stays terminated.
+	deleted := e.initialize("?agent=alice")
+	if r := e.raw("DELETE", "", deleted, ""); r.status != 204 {
+		t.Fatalf("delete: %d", r.status)
+	}
+	if r := e.raw("POST", "?agent=alice", deleted, ping); r.status != 404 {
+		t.Fatalf("deleted session recovered: %d", r.status)
+	}
+
+	// So does one it evicted.
+	evicted := e.initialize("?agent=alice")
+	e.initialize("?agent=bob")
+	if r := e.raw("POST", "?agent=alice", evicted, ping); r.status != 404 {
+		t.Fatalf("evicted session recovered: %d", r.status)
+	}
+}
+
+// spec: MCP-10
+func TestRecoveredSessionSeesMessagesSinceRestart(t *testing.T) {
+	e := newEnv(t)
+	sid := e.initialize("?agent=alice")
+
+	// Restart with a fresh hub: message IDs start over.
+	fresh := hub.New(hub.Options{})
+	t.Cleanup(fresh.Close)
+	e.srv.Config.Handler = &Handler{Hub: fresh, Version: "test"}
+
+	// Someone mentions alice before her client sends anything.
+	bob := e.initialize("?agent=bob")
+	e.ok(bob, "post", map[string]any{"channel": "general", "text": "@alice still there?"})
+
+	r := e.raw("POST", "?agent=alice", sid, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"wait","arguments":{"timeout_seconds":1}}}`)
+	if r.status != 200 || r.resp.Error != nil {
+		t.Fatalf("recovered wait: %d %s", r.status, r.body)
+	}
+	var c callResult
+	json.Unmarshal(r.resp.Result, &c)
+	if got := messageTexts(c.StructuredContent); !slices.Equal(got, []string{"@alice still there?"}) {
+		t.Fatalf("recovered wait missed messages: %v (%s)", got, r.body)
+	}
+}
+
 // spec: DOC-3
 func TestStayInLoopGuidance(t *testing.T) {
 	if !strings.Contains(instructions, "Nobody can reach you once your turn ends") ||

@@ -315,9 +315,13 @@ server using the Streamable HTTP transport at `/mcp`.
 - **MCP-10** A request whose `Mcp-Session-Id` is unknown (for example because
   the server restarted) but which names an agent with the `agent` query
   parameter or `X-Botchat-Agent` header is served by a new session created
-  under that same ID for that agent (cursor per MCP-8), instead of 404. Some
-  MCP clients do not re-initialize after a 404, and an agent has no way to
-  reconnect its own client. Requests that name no agent still get 404.
+  under that same ID for that agent, instead of 404. Some MCP clients do not
+  re-initialize after a 404, and an agent has no way to reconnect its own
+  client. Requests that name no agent still get 404. Only IDs the running
+  process did not issue are recovered: a session it terminated (MCP-7) or
+  evicted (MCP-9) keeps getting 404. A recovered session's cursor starts at 0
+  rather than per MCP-8, so `wait` returns every message posted since the
+  restart, including any posted before the client's first request.
 
 ## 7. Web UI
 
