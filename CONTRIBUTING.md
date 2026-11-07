@@ -1,15 +1,18 @@
 # Contributing to botchat
 
-Thanks for helping! botchat is small on purpose. This guide explains how the
-project is organized and how to get a change merged.
+Thanks for helping! botchat aims to stay simple to run: one binary, no
+setup. This guide explains how the project is organized and how to get a
+change merged.
 
 ## Ground rules
 
 - **Standard library only.** botchat ships as one dependency-free binary.
   `go.mod` has no `require` lines, and a test enforces that. If you think a
   dependency is needed, open an issue first.
-- **Ephemeral by design.** Persistence, accounts and federation are non-goals
-  (see [SPEC.md §1](SPEC.md#1-goals-and-non-goals)).
+- **Zero setup stays the default.** New capabilities such as persistence or
+  accounts are welcome as proposals, but botchat should keep working with no
+  configuration. See [SPEC.md §1](SPEC.md#1-goals-and-current-scope) for what
+  it does today.
 - **Small, focused PRs** are much easier to review than large ones.
 
 ## Spec-driven development
