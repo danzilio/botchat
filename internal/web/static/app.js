@@ -18,6 +18,8 @@
     loaded: new Set(),   // channels whose history was fetched
     current: null,
     threadID: null,
+    notes: new Map(),    // id -> message mentioning the viewer
+    humans: new Set(),   // names this page has registered as humans
   };
 
   // ---------- API ----------
@@ -86,6 +88,10 @@
   function onMessage(m) {
     const isNew = !state.messages.has(m.id);
     state.messages.set(m.id, m);
+    if (mentionsMe(m) && !state.notes.has(m.id)) {
+      state.notes.set(m.id, m);
+      renderNotifications();
+    }
     if (isNew && m.thread_id) {
       const root = state.messages.get(m.thread_id);
       if (root) {
@@ -285,8 +291,23 @@
 
   function myName() { return $("me").value.trim() || "human"; }
 
+  // Registers the viewer as a human before they first act (WEB-13).
+  async function ensureHuman() {
+    const me = myName();
+    if (state.humans.has(me)) return;
+    const existing = state.agents.get(me);
+    if (existing?.meta?.kind !== "human") {
+      await api(`/api/v1/agents/${encodeURIComponent(me)}`, {
+        method: "PUT",
+        body: JSON.stringify({ meta: { ...(existing?.meta || {}), kind: "human" } }),
+      });
+    }
+    state.humans.add(me);
+  }
+
   async function react(id, emoji, add) {
     try {
+      await ensureHuman();
       const m = await api(`/api/v1/messages/${id}/reactions`, {
         method: add ? "PUT" : "DELETE",
         body: JSON.stringify({ from: myName(), emoji }),
@@ -340,7 +361,133 @@
     const c = state.channels.get(state.current) || {};
     $("channel-name").textContent = "#" + (state.current || "");
     $("channel-topic").textContent = c.topic || "";
-    document.title = `#${state.current} · botchat`;
+    renderTitle();
+  }
+
+  function renderTitle() {
+    const n = unreadNotes().length;
+    document.title = `${n ? `(${n}) ` : ""}#${state.current || ""} · botchat`;
+  }
+
+  // ---------- notifications (WEB-12) ----------
+
+  function mentionsMe(m) {
+    const me = myName();
+    return m.from !== me && (m.mentions || []).some((x) => x === me || x === "all");
+  }
+
+  function readKey() { return "botchat.read." + myName(); }
+
+  function readState() {
+    try {
+      const v = JSON.parse(store.get(readKey(), "{}"));
+      return { upTo: v.upTo || 0, ids: new Set(v.ids || []) };
+    } catch { return { upTo: 0, ids: new Set() }; }
+  }
+
+  function saveReadState(r) {
+    const ids = [...r.ids].filter((id) => id > r.upTo).sort((a, b) => b - a).slice(0, 1000);
+    store.set(readKey(), JSON.stringify({ upTo: r.upTo, ids }));
+  }
+
+  function isRead(id, r = readState()) { return id <= r.upTo || r.ids.has(id); }
+
+  function unreadNotes() {
+    const r = readState();
+    return [...state.notes.values()].filter((m) => !isRead(m.id, r));
+  }
+
+  function markRead(id) {
+    const r = readState();
+    r.ids.add(id);
+    saveReadState(r);
+    renderNotifications();
+  }
+
+  function markAllRead() {
+    const r = readState();
+    for (const id of state.notes.keys()) r.upTo = Math.max(r.upTo, id);
+    saveReadState(r);
+    renderNotifications();
+  }
+
+  async function loadNotifications() {
+    state.notes = new Map();
+    const me = encodeURIComponent(myName());
+    try {
+      const { messages } = await api(`/api/v1/wait?mention=${me}&exclude_from=${me}&after=0&timeout=0&limit=500`);
+      for (const m of messages) state.notes.set(m.id, m);
+    } catch { /* shown as empty */ }
+    renderNotifications();
+  }
+
+  function renderNotifications() {
+    const r = readState();
+    const unread = [...state.notes.values()].filter((m) => !isRead(m.id, r)).length;
+    const badge = $("notif-count");
+    badge.hidden = unread === 0;
+    badge.textContent = unread > 99 ? "99+" : unread;
+    $("notif-btn").setAttribute("aria-label", unread ? `Notifications, ${unread} unread` : "Notifications");
+    renderTitle();
+
+    const ul = $("notif-list");
+    ul.replaceChildren();
+    const list = [...state.notes.values()].sort((a, b) => b.id - a.id);
+    $("notif-empty").hidden = list.length > 0;
+    $("notif-read-all").disabled = unread === 0;
+    for (const m of list) {
+      const li = document.createElement("li");
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "notif-item" + (isRead(m.id, r) ? "" : " unread");
+      const head = document.createElement("div");
+      head.className = "notif-head";
+      const who = document.createElement("strong");
+      who.textContent = m.from;
+      const where = document.createElement("span");
+      where.textContent = ` in #${m.channel}${m.thread_id ? " (thread)" : ""}`;
+      const when = document.createElement("time");
+      when.dateTime = m.created_at;
+      when.textContent = ago(m.created_at);
+      head.append(who, where, when);
+      const text = document.createElement("div");
+      text.className = "notif-text";
+      text.textContent = m.text.length > 140 ? m.text.slice(0, 140) + "…" : m.text;
+      b.append(head, text);
+      b.onclick = (e) => { e.stopPropagation(); openNotification(m); };
+      li.appendChild(b);
+      ul.appendChild(li);
+    }
+  }
+
+  function toggleNotifications(open) {
+    const panel = $("notif-panel");
+    const show = open ?? panel.hidden;
+    panel.hidden = !show;
+    $("notif-btn").setAttribute("aria-expanded", String(show));
+    if (show) renderNotifications();
+  }
+
+  async function openNotification(m) {
+    toggleNotifications(false);
+    markRead(m.id);
+    $("sidebar").classList.remove("open");
+    await selectChannel(m.channel);
+    if (m.thread_id) {
+      await openThread(m.thread_id);
+      flash($("thread-messages"), m.id);
+    } else {
+      flash($("messages"), m.id);
+    }
+  }
+
+  function flash(container, id) {
+    const el = container.querySelector(`.msg[data-id="${id}"]`);
+    if (!el) return;
+    el.scrollIntoView({ block: "center" });
+    el.classList.remove("flash");
+    void el.offsetWidth; // restart the animation
+    el.classList.add("flash");
   }
 
   function renderChannels() {
@@ -451,6 +598,7 @@
     const me = $("me").value.trim() || "human";
     const channel = threadID ? state.messages.get(threadID)?.channel : state.current;
     try {
+      await ensureHuman();
       const m = await api(`/api/v1/channels/${encodeURIComponent(channel)}/messages`, {
         method: "POST",
         body: JSON.stringify({ from: me, text, thread_id: threadID || undefined }),
@@ -483,14 +631,23 @@
       store.set("botchat.name", state.me);
       renderMessages();
       renderListeners();
+      loadNotifications();
     });
     wireComposer($("composer"), $("text"), () => null);
     wireComposer($("thread-composer"), $("thread-text"), () => state.threadID);
     $("close-thread").onclick = () => { state.threadID = null; $("thread").hidden = true; };
     $("menu").onclick = () => $("sidebar").classList.toggle("open");
-    document.addEventListener("click", () => document.querySelectorAll(".picker").forEach((p) => p.remove()));
+    $("notif-btn").onclick = (e) => { e.stopPropagation(); toggleNotifications(); };
+    $("notif-panel").onclick = (e) => e.stopPropagation();
+    $("notif-read-all").onclick = () => markAllRead();
+    document.addEventListener("click", () => {
+      document.querySelectorAll(".picker").forEach((p) => p.remove());
+      toggleNotifications(false);
+    });
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") document.querySelectorAll(".picker").forEach((p) => p.remove());
+      if (e.key !== "Escape") return;
+      document.querySelectorAll(".picker").forEach((p) => p.remove());
+      if (!$("notif-panel").hidden) { toggleNotifications(false); $("notif-btn").focus(); }
     });
     window.addEventListener("hashchange", () => {
       const name = decodeURIComponent(location.hash.slice(1));
@@ -505,6 +662,7 @@
       for (const c of channels) state.channels.set(c.name, c);
     } catch (e) { toast(e.message); }
     reconnect();
+    loadNotifications();
     await refreshAgents();
     setInterval(refreshAgents, 15000);
 

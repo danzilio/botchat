@@ -205,6 +205,100 @@ test("reacts to messages and toggles reactions", async ({ page, botchat }) => {
   expect(thread.replies[0].reactions).toEqual({ "✅": ["dana"] });
 });
 
+// spec: WEB-12
+test("lists mentions as notifications and jumps to them", async ({ page, botchat }) => {
+  await page.addInitScript(() => localStorage.setItem("botchat.name", "dana"));
+  await botchat.api("PUT", "/channels/ops", {});
+  const early = await botchat.post("ops", "claude", "@dana should we ship on Friday?");
+  await botchat.post("general", "codex", "no mention here");
+  await botchat.post("general", "dana", "@dana note to self"); // own messages don't count
+
+  await page.goto(botchat.url);
+  const btn = page.locator("#notif-btn");
+  const count = page.locator("#notif-count");
+  await expect(count).toHaveText("1"); // includes mentions from before the page loaded
+  await expect(page).toHaveTitle(/^\(1\) #general/);
+
+  const root = await botchat.post("general", "opencode", "tests are flaky");
+  await botchat.post("general", "codex", "@all heads up: CI is red", root.id);
+  await expect(count).toHaveText("2");
+
+  await btn.click();
+  const items = page.locator("#notif-list .notif-item");
+  await expect(items).toHaveCount(2);
+  await expect(items.nth(0)).toContainText("codex in #general (thread)");
+  await expect(items.nth(0)).toContainText("@all heads up: CI is red");
+  await expect(items.nth(1)).toContainText("claude in #ops");
+  await expect(items.nth(0)).toHaveClass(/unread/);
+
+  // Selecting a channel-level mention opens the channel and highlights it.
+  await items.nth(1).click();
+  await expect(page.locator("#notif-panel")).toBeHidden();
+  await expect(page).toHaveURL(/#ops$/);
+  await expect(page.locator(`#messages .msg[data-id="${early.id}"]`)).toHaveClass(/flash/);
+  await expect(count).toHaveText("1");
+
+  // A reply opens its thread.
+  await btn.click();
+  await items.nth(0).click();
+  await expect(page).toHaveURL(/#general$/);
+  await expect(page.locator("#thread")).toBeVisible();
+  await expect(page.locator("#thread-messages .msg.flash")).toContainText("CI is red");
+  await expect(count).toBeHidden();
+  await expect(page).toHaveTitle(/^#general/);
+
+  // Read state survives a reload; mark all read clears new ones.
+  await page.reload();
+  await expect(page.locator("#notif-count")).toBeHidden();
+  await botchat.post("ops", "claude", "@dana one more thing");
+  await botchat.post("ops", "claude", "@dana and another");
+  await expect(page.locator("#notif-count")).toHaveText("2");
+  await page.locator("#notif-btn").click();
+  await page.locator("#notif-read-all").click();
+  await expect(page.locator("#notif-count")).toBeHidden();
+  await expect(page.locator("#notif-list .notif-item.unread")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#notif-panel")).toBeHidden();
+});
+
+// spec: WEB-12
+test("notifications follow the viewer's name", async ({ page, botchat }) => {
+  await botchat.post("general", "claude", "@sam can you check this?");
+  await page.goto(botchat.url);
+  await expect(page.locator("#notif-count")).toBeHidden(); // default name is "human"
+  await page.locator("#notif-btn").click();
+  await expect(page.locator("#notif-empty")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.locator("#me").fill("sam");
+  await page.locator("#me").blur();
+  await expect(page.locator("#notif-count")).toHaveText("1");
+});
+
+// spec: WEB-13
+test("registers the viewer as a human before acting", async ({ page, botchat }) => {
+  await page.addInitScript(() => localStorage.setItem("botchat.name", "dana"));
+  const m = await botchat.post("general", "claude", "hello");
+  await page.goto(botchat.url);
+  await expect(page.locator("#messages .msg")).toHaveCount(1);
+  await expect(botchat.api("GET", "/agents/dana")).rejects.toThrow(/404/); // not just for viewing
+
+  await page.locator("#text").fill("hi!");
+  await page.locator("#text").press("Enter");
+  await expect(page.locator("#messages .msg")).toHaveCount(2);
+  expect((await botchat.api("GET", "/agents/dana")).meta).toEqual({ kind: "human" });
+
+  // Reacting under a new name registers that one too.
+  await page.locator("#me").fill("lee");
+  await page.locator("#me").blur();
+  const first = page.locator("#messages .msg").first();
+  await first.hover();
+  await first.locator(".react-btn").click();
+  await first.getByRole("menuitem", { name: "React with 👍" }).click();
+  await expect(first.locator(".reaction")).toHaveText("👍 1");
+  expect((await botchat.api("GET", "/agents/lee")).meta).toEqual({ kind: "human" });
+  expect((await botchat.api("GET", `/messages/${m.id}`)).reactions).toEqual({ "👍": ["lee"] });
+});
+
 // spec: WEB-5
 test("opens threads in a side pane that updates live", async ({ page, botchat }) => {
   const root = await botchat.post("general", "alice", "root message");
