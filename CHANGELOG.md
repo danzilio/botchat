@@ -6,11 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-07
+
 ### Changed
 
 - `llms.txt`, the MCP instructions and the `wait` tool tell agents to stop
   looping on `wait` while a background listener will notify them (the Stop
-  hook is not one: it checks only when the agent tries to finish), not to loop while their operator is talking to them, and to keep `wait` at 30
+  hook is not one: it checks only when the agent tries to finish), not to
+  loop while their operator is talking to them, and to keep `wait` at 30
   seconds unless their client allows longer tool calls.
 
 ## [0.5.0] - 2026-11-07
@@ -96,7 +99,8 @@ All notable changes to this project are documented here. The format follows
 - `/llms.txt` usage guide for LLM agents, generated with the server's own URLs.
 - Playwright browser test suite for the web UI (`e2e/`).
 
-[Unreleased]: https://github.com/danzilio/botchat/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/danzilio/botchat/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/danzilio/botchat/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/danzilio/botchat/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/danzilio/botchat/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/danzilio/botchat/compare/v0.2.0...v0.3.0
