@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/danzilio/botchat/internal/hub"
@@ -35,7 +36,7 @@ const (
 const instructions = `botchat is a shared chat server where AI agents (and humans watching in a web UI) coordinate work.
 
 - Call "join" first with a short, unique name (e.g. "claude-backend") unless your identity was preset.
-- Conversations happen in channels ("general" always exists). Use threads (thread_id) to keep sub-discussions together.
+- Stay in the channel your operator named ("general" always exists). Reply in a thread (thread_id) for anything about a specific message or task; keep top-level posts for starting, finishing, or being blocked. Create a channel only for a separate workstream or when asked, and announce it in the channel you came from.
 - Mention others with @name; @all mentions everyone.
 - Use "wait" to block until new messages arrive instead of polling; it returns only messages you have not yet received through wait, and never your own.
 - Need a decision, approval, or info only a human can give? @mention your operator (the human who gave you the task; humans have meta kind=human in list_agents) with one clear question, then keep waiting.
@@ -55,10 +56,16 @@ type Handler struct {
 	mu       sync.Mutex
 	sessions map[string]*list.Element // value: *session
 	lru      *list.List               // front = most recently used
+	run      string                   // prefix of session IDs this process issues (MCP-10)
+	// retired holds IDs of recovered sessions since terminated or evicted;
+	// recoveryOff is set once it would exceed the session limit (MCP-10).
+	retired     map[string]struct{}
+	recoveryOff bool
 }
 
 type session struct {
-	id string
+	id        string
+	recovered bool // created by recoverSession (MCP-10)
 
 	mu     sync.Mutex
 	agent  string
@@ -135,6 +142,9 @@ func (h *Handler) post(w http.ResponseWriter, r *http.Request) {
 	}
 	sess := h.lookup(sid)
 	if sess == nil {
+		sess = h.recoverSession(sid, requestAgent(r))
+	}
+	if sess == nil {
 		http.Error(w, "unknown session", http.StatusNotFound)
 		return
 	}
@@ -179,10 +189,7 @@ func (h *Handler) initialize(w http.ResponseWriter, r *http.Request, req rpcRequ
 		version = p.ProtocolVersion
 	}
 
-	agent := r.URL.Query().Get("agent")
-	if agent == "" {
-		agent = r.Header.Get("X-Botchat-Agent")
-	}
+	agent := requestAgent(r)
 	if agent != "" {
 		if _, err := h.Hub.RegisterAgent(agent, nil); err != nil {
 			writeRPC(w, rpcResponse{ID: idOrNull(req.ID), Error: &rpcError{codeInvalidParams, err.Error()}})
@@ -190,7 +197,7 @@ func (h *Handler) initialize(w http.ResponseWriter, r *http.Request, req rpcRequ
 		}
 	}
 
-	sess := h.newSession(agent)
+	sess := h.insertSession(&session{id: h.newSessionID(), agent: agent, cursor: h.Hub.LastMessageID()})
 	w.Header().Set(sessionHeader, sess.id)
 	writeRPC(w, rpcResponse{ID: idOrNull(req.ID), Result: map[string]any{
 		"protocolVersion": version,
@@ -209,8 +216,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	el, ok := h.sessions[sid]
 	if ok {
-		h.lru.Remove(el)
-		delete(h.sessions, sid)
+		h.retireLocked(el)
 	}
 	h.mu.Unlock()
 	if !ok {
@@ -220,25 +226,120 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *Handler) newSession(agent string) *session {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	s := &session{id: hex.EncodeToString(b), agent: agent, cursor: h.Hub.LastMessageID()}
+// requestAgent is the agent named by the request's `agent` query parameter
+// or X-Botchat-Agent header (MCP-3).
+func requestAgent(r *http.Request) string {
+	if agent := r.URL.Query().Get("agent"); agent != "" {
+		return agent
+	}
+	return r.Header.Get("X-Botchat-Agent")
+}
 
+// recoverSession recreates an unknown session under the client's ID when the
+// request names its agent, so clients that never re-initialize survive a
+// server restart (MCP-10). Only IDs this process did not issue are recovered:
+// one it issued was deleted or evicted and stays gone. The recovered session's
+// cursor starts at 0 because every message in this process is newer than
+// anything the client saw before the restart. It returns nil if the session
+// can't be recovered.
+func (h *Handler) recoverSession(id, agent string) *session {
+	if agent == "" || len(id) > 128 || strings.HasPrefix(id, h.runPrefix()+"-") {
+		return nil
+	}
+	h.mu.Lock()
+	ok := h.recoverableLocked(id)
+	h.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	if _, err := h.Hub.RegisterAgent(agent, nil); err != nil {
+		return nil
+	}
+	return h.insertSession(&session{id: id, agent: agent, recovered: true})
+}
+
+// recoverableLocked reports whether a recovered session may be created under
+// id: it was not already recovered and then terminated or evicted in this
+// process, and recovery has not been switched off (MCP-10).
+func (h *Handler) recoverableLocked(id string) bool {
+	if h.recoveryOff {
+		return false
+	}
+	_, gone := h.retired[id]
+	return !gone
+}
+
+// retireLocked removes a session (DELETE or eviction). A recovered session's
+// ID is remembered so it cannot be recovered again. At most MaxSessions IDs
+// are remembered; past that, recovery is switched off for the rest of the run
+// rather than forgetting one, so a terminated session never comes back.
+func (h *Handler) retireLocked(el *list.Element) {
+	s := el.Value.(*session)
+	h.lru.Remove(el)
+	delete(h.sessions, s.id)
+	if !s.recovered || h.recoveryOff {
+		return
+	}
+	if len(h.retired) >= h.limit() {
+		h.recoveryOff = true
+		h.retired = nil
+		return
+	}
+	if h.retired == nil {
+		h.retired = map[string]struct{}{}
+	}
+	h.retired[s.id] = struct{}{}
+}
+
+func (h *Handler) limit() int {
+	if h.MaxSessions <= 0 {
+		return DefaultMaxSessions
+	}
+	return h.MaxSessions
+}
+
+func randomHex(n int) string {
+	b := make([]byte, n)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// runPrefix identifies this process; every session ID it issues starts with
+// it followed by "-".
+func (h *Handler) runPrefix() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.run == "" {
+		h.run = randomHex(8)
+	}
+	return h.run
+}
+
+func (h *Handler) newSessionID() string {
+	return h.runPrefix() + "-" + randomHex(16)
+}
+
+// insertSession adds s to the session table, evicting the least recently used
+// session if full (MCP-9). For a recovered session it returns the existing
+// session if a concurrent request recovered the same ID first, and nil if the
+// ID may no longer be recovered; that check shares the lock with the insert so
+// a session terminated meanwhile is never reinserted.
+func (h *Handler) insertSession(s *session) *session {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.sessions == nil {
 		h.sessions = map[string]*list.Element{}
 		h.lru = list.New()
 	}
-	limit := h.MaxSessions
-	if limit <= 0 {
-		limit = DefaultMaxSessions
+	if el, ok := h.sessions[s.id]; ok { // lost a race with a concurrent recover
+		h.lru.MoveToFront(el)
+		return el.Value.(*session)
 	}
-	for h.lru.Len() >= limit {
-		oldest := h.lru.Back()
-		h.lru.Remove(oldest)
-		delete(h.sessions, oldest.Value.(*session).id)
+	if s.recovered && !h.recoverableLocked(s.id) {
+		return nil
+	}
+	for h.lru.Len() >= h.limit() {
+		h.retireLocked(h.lru.Back())
 	}
 	h.sessions[s.id] = h.lru.PushFront(s)
 	return s

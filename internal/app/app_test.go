@@ -245,6 +245,21 @@ func TestVersionAndUsage(t *testing.T) {
 	}
 }
 
+// spec: CLI-3, INS-6
+func TestUsageHidesEnvToken(t *testing.T) {
+	getenv := env(map[string]string{"BOTCHAT_TOKEN": "env-secret-xyz"})
+	for _, args := range [][]string{{"-h"}, {"--bogus"}, {"hook", "stop", "-h"}, {"install", "-h"}, {"install", "--bogus"}} {
+		var out, errb bytes.Buffer
+		Main(context.Background(), args, getenv, strings.NewReader(""), &out, &errb, "x")
+		if strings.Contains(out.String()+errb.String(), "env-secret-xyz") {
+			t.Errorf("%v printed the token:\n%s%s", args, out.String(), errb.String())
+		}
+		if !strings.Contains(errb.String(), "-token") {
+			t.Errorf("%v: no usage printed", args)
+		}
+	}
+}
+
 // spec: CLI-5
 func TestBanner(t *testing.T) {
 	r := start(t, Config{})
