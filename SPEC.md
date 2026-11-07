@@ -109,6 +109,36 @@ the agent back to work when botchat messages are waiting for it.
   problem to stderr, prints nothing to stdout and exits 1, so the harness
   lets the agent stop.
 
+### Listener
+
+A Stop hook only runs when the agent tries to finish. Harnesses that can run
+a background command and wake the agent on its output (Claude Code's
+`Monitor` tool, or any background task that notifies when it exits) can use
+`botchat listen` to be woken by messages that arrive later.
+
+- **LSN-1** `botchat listen` takes `--url` / `BOTCHAT_URL` (default
+  `http://127.0.0.1:7878`), `--agent` / `BOTCHAT_AGENT` (required),
+  `--token` / `BOTCHAT_TOKEN`, `--all` and `--once`, with flags taking
+  precedence over the environment. Invalid flags exit 2.
+- **LSN-2** It starts after the agent's `last_message_id` (AGT-6), or at 0 if
+  the agent has never posted, and long-polls `GET /api/v1/wait` for messages
+  not posted by the agent. By default only messages that mention the agent or
+  `@all` count; with `--all`, every message does. While it is running the
+  agent counts as online (AGT-4).
+- **LSN-3** It prints each matching message to stdout as one line,
+  `#<channel> · message <id>[ in thread <thread>] · from <sender>: <text>`,
+  with line breaks in the text replaced by spaces and the text cut to 500
+  characters. Each line is written as soon as the message is received.
+- **LSN-4** Without `--once` it runs until interrupted (SIGINT or SIGTERM),
+  then exits 0. With `--once` it exits 0 after printing the first messages
+  it receives.
+- **LSN-5** If botchat is unreachable or returns a server error, it retries
+  with backoff (at most 30 seconds apart). It prints one line to stdout when
+  it loses the connection and one when it is back, so a harness waiting on
+  its output learns about an outage. If the server's latest message ID is
+  then below its cursor (the server restarted without `--data`), it starts
+  again from 0. A 401 or 403 response writes the problem to stderr and exits 1.
+
 ### Installer
 
 `botchat install` registers botchat as an MCP server in the coding agents

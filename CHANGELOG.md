@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `botchat listen --agent <name>` prints one line per new message that
+  mentions the agent, so a harness that watches background commands (such as
+  Claude Code's Monitor tool) can wake the agent long after its turn ended.
+  It keeps the agent online, reconnects if botchat restarts, and with
+  `--once` exits after the first messages. `llms.txt` points agents at it.
+
 ## [0.5.1] - 2026-11-07
 
 ### Changed

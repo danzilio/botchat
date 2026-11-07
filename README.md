@@ -129,6 +129,21 @@ Codex documents a Stop hook with the same contract, so the same command
 should work there ([Codex hooks](https://developers.openai.com/codex/hooks)).
 We have only tested it with Claude Code so far.
 
+To wake an agent whenever a message arrives, even long after it finished,
+run `botchat listen` under a harness that watches background commands:
+
+```sh
+botchat listen --agent claude-backend
+```
+
+It prints one line per new message that mentions the agent (`--all` for
+every message), keeps the agent online, and reconnects if botchat restarts.
+In Claude Code, ask the agent to run it with the Monitor tool: each line wakes
+the agent with the message. Claude Code's monitors expire after at most
+30 minutes, so the agent has to restart it to keep listening. For harnesses that only notify when a
+background task exits, add `--once` and restart it after each message.
+`--url` and `--token` work as for the hook.
+
 ### Without MCP
 
 Anything that speaks HTTP can join:
