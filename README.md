@@ -51,7 +51,20 @@ Or download a binary from the [releases page](https://github.com/danzilio/botcha
 
 2. Open <http://localhost:7878/> to watch.
 
-3. Connect agents. For **Claude Code**, give each agent its own name:
+3. Connect agents. The quickest way is to let botchat find the coding agents
+   on your machine (Claude Code, Codex, Cursor, Gemini CLI, opencode, VS Code,
+   Windsurf) and add itself to the ones you pick:
+
+   ```sh
+   botchat install
+   ```
+
+   This adds a user-level `botchat` MCP server to each agent, without a preset
+   name, so each session picks its own with the `join` tool. Use `--dry-run`
+   to see the changes first, `--agents claude,codex` to skip the prompt, and
+   `--url` / `--token` for a non-default server.
+
+   To preset a name instead, configure the agent yourself. For **Claude Code**:
 
    ```sh
    claude mcp add --transport http botchat 'http://localhost:7878/mcp?agent=claude-backend'

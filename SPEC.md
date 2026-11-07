@@ -57,6 +57,8 @@ decisions; any of them can change through a spec proposal (see
   precedence over the environment, which takes precedence over the default.
 - **CLI-3** `--token` / `BOTCHAT_TOKEN` sets a shared secret that enables
   authentication (see API-4), with the same precedence rules as CLI-2.
+  Usage output (of botchat and its subcommands) never shows a token taken
+  from `BOTCHAT_TOKEN`.
 - **CLI-4** `--version` prints `botchat <version>` to stdout and exits 0.
   Unknown flags print usage to stderr and exit 2.
 - **CLI-5** On startup botchat prints a banner to stdout containing the web
@@ -100,6 +102,55 @@ the agent back to work when botchat messages are waiting for it.
 - **HOOK-4** If botchat is unreachable or the input is invalid, it writes the
   problem to stderr, prints nothing to stdout and exits 1, so the harness
   lets the agent stop.
+
+### Installer
+
+`botchat install` registers botchat as an MCP server in the coding agents
+found on the machine, at user level, so every session of that agent can
+use it.
+
+| agent       | detected by                                      | installed via                                         |
+|-------------|--------------------------------------------------|-------------------------------------------------------|
+| Claude Code | `claude` on `PATH`                               | `claude mcp add --scope user --transport http`        |
+| Codex       | `codex` on `PATH`                                | `codex mcp add --url`                                 |
+| Cursor      | `cursor` on `PATH` or `~/.cursor`                | `~/.cursor/mcp.json`, `mcpServers.botchat`            |
+| Gemini CLI  | `gemini` on `PATH`                               | `~/.gemini/settings.json`, `mcpServers.botchat`       |
+| opencode    | `opencode` on `PATH` or `~/.config/opencode`     | `~/.config/opencode/opencode.json`, `mcp.botchat`     |
+| VS Code     | `code` on `PATH` or `<user config dir>/Code/User` | `<user config dir>/Code/User/mcp.json`, `servers.botchat` |
+| Windsurf    | `windsurf` on `PATH` or `~/.codeium/windsurf`    | `~/.codeium/windsurf/mcp_config.json`, `mcpServers.botchat` |
+
+- **INS-1** `botchat install` lists the supported agents it detects (see the
+  table), numbered, each marked as already having a `botchat` server or not.
+  If none are detected it says so and exits 0.
+- **INS-2** Without `--agents`, it asks which agents to install into and
+  reads one line from stdin: `all`, or numbers and/or agent IDs separated by
+  commas or spaces. An empty line or end of input installs nothing and exits 0.
+  `--agents <list>` (IDs or `all`) skips the prompt. An unknown or undetected
+  selection is a usage error (exit 2) and changes nothing.
+- **INS-3** The installed server is named `botchat`, uses the Streamable HTTP
+  transport and points at `<url>/mcp` with no preset agent name, so each
+  session picks its name with `join`. `<url>` comes from `--url` /
+  `BOTCHAT_URL` (default `http://127.0.0.1:7878`). With `--token` /
+  `BOTCHAT_TOKEN` the entry sends `Authorization: Bearer <token>`, except
+  for Codex, which is told to read the token from the `BOTCHAT_TOKEN`
+  environment variable. Flags take precedence over the environment.
+- **INS-4** Edits to JSON config files keep every other key and the order of
+  keys. A missing or empty file is created or filled (new files get mode
+  `0600`, parent directories `0700`). A file that is not a JSON object (for
+  example `null`, or one with comments) or that repeats a key is not
+  modified; that agent fails with an error that shows the entry to add by
+  hand. Files are replaced atomically, and a symlinked config file (even a
+  dangling one) is written through to its target, never replaced.
+- **INS-5** An agent that already has a user-level `botchat` server is left
+  unchanged and reported as such, unless `--force` is given, in which case
+  the entry is replaced. Project- or local-scoped entries don't count and
+  are never modified: agent CLIs are run from an empty temporary directory.
+- **INS-6** `--dry-run` prints what would be run or written for each
+  selected agent and changes nothing. Nothing the installer prints (dry
+  run, results, errors, usage) contains the token, in any escaped form; it
+  shows `<token>` instead.
+- **INS-7** It reports the outcome for each selected agent and exits 1 if
+  any of them failed, 0 otherwise. Unknown flags or arguments exit 2.
 
 ## 3. Data model
 
