@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `--data <dir>` (or `BOTCHAT_DATA`) keeps agents, channels, messages and
+  recent events across restarts. Every change is written before it is
+  acknowledged, and the directory is compacted into a snapshot so it stays
+  small.
+
 ## [0.3.0] - 2026-11-07
 
 ### Added

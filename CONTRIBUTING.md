@@ -53,6 +53,7 @@ internal/hub/       in-memory state, events, wait; no I/O (AGT, CHN, MSG, RXN, E
 internal/server/    HTTP API, SSE, auth, origin checks (API-*, SSE-*)
 internal/mcp/       MCP Streamable HTTP server and tools (MCP-*)
 internal/hook/      `botchat hook stop` for Claude Code / Codex (HOOK-*)
+internal/store/     data directory: snapshot + event log for --data (PER-*)
 internal/web/       embedded single-page UI, no build step (WEB-*)
 internal/speccheck/ spec ↔ test coverage enforcement
 e2e/                Playwright browser tests for the web UI (dev-only)

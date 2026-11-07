@@ -114,9 +114,7 @@ func (h *Hub) emitLocked(e Event) {
 	e.Seq = h.seq
 	e.At = h.now()
 	h.history = append(h.history, e)
-	if over := len(h.history) - h.opts.EventHistory; over > 0 {
-		h.history = slices.Delete(h.history, 0, over)
-	}
+	h.trimHistoryLocked()
 	if h.opts.OnEvent != nil {
 		h.opts.OnEvent(e)
 	}
@@ -394,12 +392,7 @@ func (h *Hub) Post(in PostInput) (Message, error) {
 	sender.agent.LastMessageID = m.ID
 	h.messages[m.ID] = m
 	cs.msgs = append(cs.msgs, m.ID)
-	if over := len(cs.msgs) - h.opts.MaxMessagesPerChannel; over > 0 {
-		for _, id := range cs.msgs[:over] {
-			delete(h.messages, id)
-		}
-		cs.msgs = slices.Delete(cs.msgs, 0, over)
-	}
+	h.evictLocked(cs)
 	h.emitLocked(Event{Type: EventMessageCreated, Message: m.clone()})
 	return *m.clone(), nil
 }

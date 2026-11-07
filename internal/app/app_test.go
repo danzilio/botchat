@@ -255,7 +255,7 @@ func TestBanner(t *testing.T) {
 		}
 	}
 	var b bytes.Buffer
-	printBanner(&b, "0.0.0.0:7878", "v", false, "")
+	printBanner(&b, "0.0.0.0:7878", "v", false, "", "")
 	if !strings.Contains(b.String(), "http://localhost:7878/mcp") {
 		t.Errorf("unspecified address should display as localhost:\n%s", b.String())
 	}
@@ -356,6 +356,60 @@ func TestNoFilesWithoutLog(t *testing.T) {
 	entries, _ := os.ReadDir(dir)
 	if len(entries) != 0 {
 		t.Fatalf("botchat wrote files: %v", entries)
+	}
+}
+
+// spec: CLI-10
+func TestDataDir(t *testing.T) {
+	cfg, _ := ParseConfig(nil, env(map[string]string{"BOTCHAT_DATA": "/env"}), io.Discard)
+	if cfg.DataDir != "/env" {
+		t.Fatalf("data %q", cfg.DataDir)
+	}
+	cfg, _ = ParseConfig([]string{"--data", "/flag"}, env(map[string]string{"BOTCHAT_DATA": "/env"}), io.Discard)
+	if cfg.DataDir != "/flag" {
+		t.Fatalf("data %q", cfg.DataDir)
+	}
+	if cfg, _ = ParseConfig(nil, env(nil), io.Discard); cfg.DataDir != "" {
+		t.Fatal("no data directory by default")
+	}
+
+	dir := filepath.Join(t.TempDir(), "state")
+	r := start(t, Config{DataDir: dir})
+	if !strings.Contains(r.stdout.String(), "saved in "+dir) {
+		t.Fatalf("banner should name the data directory:\n%s", r.stdout.String())
+	}
+	post(t, r.base, "general", "alice", "remember")
+	post(t, r.base, "dev", "bob", "me")
+	r.stop(t)
+
+	r = start(t, Config{DataDir: dir})
+	res, err := http.Get(r.base + "/api/v1/channels/dev/messages")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Messages []struct {
+			ID   int    `json:"id"`
+			Text string `json:"text"`
+		} `json:"messages"`
+	}
+	json.NewDecoder(res.Body).Decode(&got)
+	res.Body.Close()
+	if len(got.Messages) != 1 || got.Messages[0].ID != 2 || got.Messages[0].Text != "me" {
+		t.Fatalf("after restart: %+v", got.Messages)
+	}
+	post(t, r.base, "general", "alice", "next")
+	res, _ = http.Get(r.base + "/api/v1/messages/3")
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("message IDs should continue after restart: %d", res.StatusCode)
+	}
+	r.stop(t)
+
+	file := filepath.Join(t.TempDir(), "file")
+	os.WriteFile(file, nil, 0o600)
+	if err := Run(context.Background(), Config{Addr: "127.0.0.1:0", DataDir: file, MaxMessages: 1}, "v", io.Discard, nil); err == nil {
+		t.Fatal("unusable data directory must fail")
 	}
 }
 
