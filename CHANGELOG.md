@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `--token` with no value generates a random token and prints it in the
+  startup banner.
+
 ## [0.2.0] - 2026-11-07
 
 ### Added

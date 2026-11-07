@@ -158,6 +158,68 @@ func TestTokenPrecedence(t *testing.T) {
 	}
 }
 
+// spec: CLI-9
+func TestBareTokenGenerates(t *testing.T) {
+	const gen = "<generated>"
+	cases := []struct {
+		args  []string
+		token string // gen means a fresh token must be generated
+		addr  string
+	}{
+		{[]string{"--token"}, gen, DefaultAddr},
+		{[]string{"-token"}, gen, DefaultAddr},
+		{[]string{"--token", "--addr", "127.0.0.1:9"}, gen, "127.0.0.1:9"},
+		{[]string{"--addr", "127.0.0.1:9", "--token"}, gen, "127.0.0.1:9"},
+		{[]string{"--version", "--token"}, gen, DefaultAddr},
+		{[]string{"--token", "abc"}, "abc", DefaultAddr},
+		{[]string{"--token=abc"}, "abc", DefaultAddr},
+		{[]string{"--token="}, "", DefaultAddr},
+		{[]string{"--log", "--token"}, "env", DefaultAddr}, // "--token" is --log's value
+	}
+	for _, c := range cases {
+		cfg, err := ParseConfig(c.args, env(map[string]string{"BOTCHAT_TOKEN": "env"}), io.Discard)
+		if err != nil {
+			t.Fatalf("%v: %v", c.args, err)
+		}
+		if cfg.Addr != c.addr || cfg.TokenGenerated != (c.token == gen) {
+			t.Fatalf("%v: generated=%v addr=%q", c.args, cfg.TokenGenerated, cfg.Addr)
+		}
+		if c.token == gen {
+			if len(cfg.Token) < 26 || cfg.Token == "env" {
+				t.Fatalf("%v: weak generated token %q", c.args, cfg.Token)
+			}
+		} else if cfg.Token != c.token {
+			t.Fatalf("%v: token %q, want %q", c.args, cfg.Token, c.token)
+		}
+	}
+	a, _ := ParseConfig([]string{"--token"}, env(nil), io.Discard)
+	b, _ := ParseConfig([]string{"--token"}, env(nil), io.Discard)
+	if a.Token == b.Token {
+		t.Fatal("generated tokens should differ")
+	}
+
+	r := start(t, Config{Token: a.Token, TokenGenerated: true})
+	out := r.stdout.String()
+	if !strings.Contains(out, "Token:   "+a.Token) || !strings.Contains(out, "Bearer "+a.Token) {
+		t.Fatalf("banner should show the generated token:\n%s", out)
+	}
+	req, _ := http.NewRequest("GET", r.base+"/api/v1/agents", nil)
+	req.Header.Set("Authorization", "Bearer "+a.Token)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("generated token rejected: %d", res.StatusCode)
+	}
+
+	r = start(t, Config{Token: "sekrit"})
+	if strings.Contains(r.stdout.String(), "sekrit") {
+		t.Fatal("an explicit token must not be printed")
+	}
+}
+
 // spec: CLI-4
 func TestVersionAndUsage(t *testing.T) {
 	var out, errb bytes.Buffer
@@ -193,7 +255,7 @@ func TestBanner(t *testing.T) {
 		}
 	}
 	var b bytes.Buffer
-	printBanner(&b, "0.0.0.0:7878", "v", false)
+	printBanner(&b, "0.0.0.0:7878", "v", false, "")
 	if !strings.Contains(b.String(), "http://localhost:7878/mcp") {
 		t.Errorf("unspecified address should display as localhost:\n%s", b.String())
 	}
