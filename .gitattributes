@@ -1,0 +1,3 @@
+# Keep LF everywhere. Embedded files (llms.txt, web UI) are served as-is, so
+# Windows CRLF conversion would change what the binary sends.
+* text=auto eol=lf
