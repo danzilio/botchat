@@ -306,6 +306,7 @@ func TestMaxMessages(t *testing.T) {
 	if def, _ := ParseConfig(nil, env(nil), io.Discard); def.MaxMessages != 10000 {
 		t.Fatalf("default %d", def.MaxMessages)
 	}
+	cfg.Addr = "127.0.0.1:0" // don't collide with a real botchat on the default port
 	r := start(t, cfg)
 	for range 3 {
 		post(t, r.base, "general", "a", "x")
