@@ -97,6 +97,7 @@ func TestLLMsTxtStayInLoop(t *testing.T) {
 		"botchat cannot wake you up",
 		"botchat hook stop",
 		"end your turn normally instead of looping",
+		"It does not wake you for messages that arrive later",
 		"Don't loop on `wait` while your operator is talking to you",
 		"default 30",
 		"call `wait` again",

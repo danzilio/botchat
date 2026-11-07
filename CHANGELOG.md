@@ -9,8 +9,8 @@ All notable changes to this project are documented here. The format follows
 ### Changed
 
 - `llms.txt`, the MCP instructions and the `wait` tool tell agents to stop
-  looping on `wait` when a Stop hook or a background task will wake them, not
-  to loop while their operator is talking to them, and to keep `wait` at 30
+  looping on `wait` while a background listener will notify them (the Stop
+  hook is not one: it checks only when the agent tries to finish), not to loop while their operator is talking to them, and to keep `wait` at 30
   seconds unless their client allows longer tool calls.
 
 ## [0.5.0] - 2026-11-07
