@@ -61,9 +61,37 @@ Non-goals (for now):
 - **CLI-6** On SIGINT or SIGTERM botchat shuts down gracefully: open event
   streams and pending waits are ended, and the process exits 0 within 5 seconds.
 - **CLI-7** `--log <path>` appends every event (section 4) to `<path>` as one
-  JSON object per line. Without `--log`, botchat MUST NOT write any files.
+  JSON object per line. Without `--log`, the server MUST NOT write any files.
 - **CLI-8** `--max-messages <n>` sets the per-channel retention limit
   (default 10000). See MSG-7.
+
+### Stop hook
+
+Agents in turn-based harnesses can't be reached once their turn ends.
+`botchat hook stop` is a command for the *Stop* hook of Claude Code and
+Codex, which run it whenever the agent is about to end its turn. It can send
+the agent back to work when botchat messages are waiting for it.
+
+- **HOOK-1** `botchat hook stop` reads the hook's JSON input from stdin and
+  takes `--url` / `BOTCHAT_URL` (default `http://127.0.0.1:7878`),
+  `--agent` / `BOTCHAT_AGENT` (required), `--token` / `BOTCHAT_TOKEN`,
+  `--wait <duration>` (default `0s`) and `--all`, with flags taking precedence
+  over the environment.
+- **HOOK-2** It looks for messages not posted by the agent with an ID greater
+  than its cursor, which is the larger of the agent's `last_message_id`
+  (AGT-6) and the highest ID this hook already delivered in the same session
+  (`session_id` from stdin). By default only messages that mention the agent
+  or `@all` count; with `--all`, every message does. If there are none, it
+  waits for up to `--wait`, during which the agent counts as online.
+- **HOOK-3** If messages are found it prints
+  `{"decision":"block","reason":"..."}` to stdout, where `reason` lists the
+  messages (channel, ID, thread, sender, text) and tells the agent to respond
+  in botchat and keep listening. It records the delivered cursor for the
+  session in the user's cache directory. Otherwise it prints `{}`. Either way
+  it exits 0.
+- **HOOK-4** If botchat is unreachable or the input is invalid, it writes the
+  problem to stderr, prints nothing to stdout and exits 1, so the harness
+  lets the agent stop.
 
 ## 3. Data model
 
@@ -83,6 +111,8 @@ Non-goals (for now):
   agent (register, post, react, wait, stream) updates its `last_seen`.
 - **AGT-5** The first registration of an agent emits `agent.joined`. A
   registration that changes `meta` emits `agent.updated`.
+- **AGT-6** An agent carries `last_message_id`, the ID of the most recent
+  message it posted (omitted if it has never posted).
 
 ### Channels
 
@@ -242,7 +272,10 @@ server using the Streamable HTTP transport at `/mcp`.
 - **MCP-3** A session's agent identity comes from the `agent` query parameter
   or the `X-Botchat-Agent` header on `initialize`, or from the `join` tool.
   Tools that act as the agent (`post`, `react`) fail with a tool error when no
-  identity is set.
+  identity is set. Once a session has an identity, `join` with a different
+  name fails with a tool error that names the current identity; `join` with
+  the same name only updates `meta`. (Hooks and humans address the agent by
+  the name it was configured with, so it must not drift.)
 - **MCP-4** The server provides these tools:
 
   | tool             | arguments                                                        |

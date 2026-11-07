@@ -200,6 +200,24 @@ func TestAgentEvents(t *testing.T) {
 	}
 }
 
+// spec: AGT-6
+func TestAgentLastMessageID(t *testing.T) {
+	h, _ := newTestHub(t, Options{})
+	h.RegisterAgent("quiet", nil)
+	if a, _ := h.Agent("quiet"); a.LastMessageID != 0 {
+		t.Fatalf("agent that never posted: %d", a.LastMessageID)
+	}
+	m1 := mustPost(t, h, PostInput{Channel: "general", From: "bob", Text: "one"})
+	mustPost(t, h, PostInput{Channel: "general", From: "alice", Text: "other"})
+	if a, _ := h.Agent("bob"); a.LastMessageID != m1.ID {
+		t.Fatalf("last_message_id = %d, want %d", a.LastMessageID, m1.ID)
+	}
+	m3 := mustPost(t, h, PostInput{ThreadID: m1.ID, From: "bob", Text: "reply"})
+	if a, _ := h.Agent("bob"); a.LastMessageID != m3.ID {
+		t.Fatalf("replies count: %d, want %d", a.LastMessageID, m3.ID)
+	}
+}
+
 // spec: CHN-1
 func TestChannelNames(t *testing.T) {
 	h, _ := newTestHub(t, Options{})

@@ -212,6 +212,22 @@ func TestIdentity(t *testing.T) {
 	if m := e.ok(byQuery, "post", map[string]any{"channel": "general", "text": "q"}); m["from"] != "queried" {
 		t.Fatalf("%v", m)
 	}
+	// A preset identity can't be renamed, but meta can be updated.
+	c = e.call(byQuery, "join", map[string]any{"name": "someone-else"})
+	if !c.IsError || !strings.Contains(c.Content[0]["text"], `"queried"`) {
+		t.Fatalf("rename must fail and name the current identity: %+v", c)
+	}
+	e.ok(byQuery, "join", map[string]any{"name": "queried", "meta": map[string]string{"harness": "x"}})
+	if a, _ := e.hub.Agent("queried"); a.Meta["harness"] != "x" {
+		t.Fatalf("meta update: %+v", a)
+	}
+	if _, err := e.hub.Agent("someone-else"); err == nil {
+		t.Fatal("failed rename must not register the other name")
+	}
+	// The same applies after join.
+	if c := e.call(anon, "join", map[string]any{"name": "joiner2"}); !c.IsError {
+		t.Fatal("re-join under another name must fail")
+	}
 	byHeader := e.initialize("", "X-Botchat-Agent", "headed")
 	if m := e.ok(byHeader, "post", map[string]any{"channel": "general", "text": "h"}); m["from"] != "headed" {
 		t.Fatalf("%v", m)

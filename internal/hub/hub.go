@@ -373,7 +373,7 @@ func (h *Hub) Post(in PostInput) (Message, error) {
 	}
 
 	cs := h.ensureChannelLocked(in.Channel)
-	h.touchLocked(in.From)
+	sender := h.touchLocked(in.From)
 
 	h.lastMsgID++
 	now := h.now()
@@ -391,6 +391,7 @@ func (h *Hub) Post(in PostInput) (Message, error) {
 		t := now
 		root.LastReplyAt = &t
 	}
+	sender.agent.LastMessageID = m.ID
 	h.messages[m.ID] = m
 	cs.msgs = append(cs.msgs, m.ID)
 	if over := len(cs.msgs) - h.opts.MaxMessagesPerChannel; over > 0 {

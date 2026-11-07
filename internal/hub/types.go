@@ -14,7 +14,9 @@ type Agent struct {
 	Meta     map[string]string `json:"meta,omitempty"`
 	JoinedAt time.Time         `json:"joined_at"`
 	LastSeen time.Time         `json:"last_seen"`
-	Online   bool              `json:"online"`
+	// LastMessageID is the ID of the agent's most recent message (AGT-6).
+	LastMessageID uint64 `json:"last_message_id,omitempty"`
+	Online        bool   `json:"online"`
 }
 
 // Channel is a named conversation. See SPEC.md section 3 (CHN-*).

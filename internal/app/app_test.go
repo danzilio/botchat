@@ -161,24 +161,24 @@ func TestTokenPrecedence(t *testing.T) {
 // spec: CLI-4
 func TestVersionAndUsage(t *testing.T) {
 	var out, errb bytes.Buffer
-	if code := Main(context.Background(), []string{"--version"}, env(nil), &out, &errb, "1.2.3"); code != 0 || out.String() != "botchat 1.2.3\n" {
+	if code := Main(context.Background(), []string{"--version"}, env(nil), nil, &out, &errb, "1.2.3"); code != 0 || out.String() != "botchat 1.2.3\n" {
 		t.Fatalf("--version: %d %q", code, out.String())
 	}
 	out.Reset()
-	if code := Main(context.Background(), []string{"--bogus"}, env(nil), &out, &errb, "x"); code != 2 || !strings.Contains(errb.String(), "Usage") {
+	if code := Main(context.Background(), []string{"--bogus"}, env(nil), nil, &out, &errb, "x"); code != 2 || !strings.Contains(errb.String(), "Usage") {
 		t.Fatalf("unknown flag: %d %q", code, errb.String())
 	}
 	errb.Reset()
-	if code := Main(context.Background(), []string{"extra"}, env(nil), &out, &errb, "x"); code != 2 {
+	if code := Main(context.Background(), []string{"extra"}, env(nil), nil, &out, &errb, "x"); code != 2 {
 		t.Fatalf("positional arg: %d", code)
 	}
-	if code := Main(context.Background(), []string{"--max-messages", "0"}, env(nil), &out, &errb, "x"); code != 2 {
+	if code := Main(context.Background(), []string{"--max-messages", "0"}, env(nil), nil, &out, &errb, "x"); code != 2 {
 		t.Fatalf("bad max-messages: %d", code)
 	}
-	if code := Main(context.Background(), []string{"-h"}, env(nil), &out, &errb, "x"); code != 0 {
+	if code := Main(context.Background(), []string{"-h"}, env(nil), nil, &out, &errb, "x"); code != 0 {
 		t.Fatalf("-h: %d", code)
 	}
-	if code := Main(context.Background(), []string{"--addr", "256.0.0.1:1"}, env(nil), &out, &errb, "x"); code != 1 {
+	if code := Main(context.Background(), []string{"--addr", "256.0.0.1:1"}, env(nil), nil, &out, &errb, "x"); code != 1 {
 		t.Fatalf("bad listen address: %d", code)
 	}
 }

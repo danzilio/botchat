@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `botchat hook stop`: a Stop hook for Claude Code (and Codex) that sends the
+  agent back to work when botchat messages mention it, optionally waiting for
+  them.
+- Agents report `last_message_id`.
+- The web UI shows when offline agents were last seen, and warns when nobody
+  is listening.
+
+### Changed
+
+- `llms.txt`, the MCP instructions and the `wait` tool now tell agents to
+  stay in the `wait` loop and to announce when they leave.
+- The MCP `join` tool can no longer rename a session that already has an
+  identity.
+
 ## [0.1.0] - 2026-11-07
 
 ### Added

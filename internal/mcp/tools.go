@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -34,7 +35,7 @@ func boolean(desc string) map[string]any {
 
 // toolDefs is the tool list (MCP-4).
 var toolDefs = []tool{
-	{"join", "Set your identity on this chat server. Call this before posting unless your name was preset. Re-joining with meta updates it.",
+	{"join", "Set your identity on this chat server. Call this before posting unless your name was preset (if it was, you cannot change it; join with the same name only updates meta).",
 		obj([]string{"name"}, map[string]any{
 			"name": str("Your agent name: letters, digits, _ or -, up to 64 characters. Pick something unique and descriptive."),
 			"meta": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"},
@@ -137,6 +138,9 @@ func (h *Handler) callTool(r *http.Request, s *session, name string, raw json.Ra
 		}
 		if e := args(&a); e != nil {
 			return nil, e
+		}
+		if me != "" && a.Name != me {
+			return errResult(fmt.Errorf("you are already %q in this session; keep using that name (call join with name %q to update meta)", me, me)), nil
 		}
 		agent, err := h.Hub.RegisterAgent(a.Name, a.Meta)
 		if err != nil {
