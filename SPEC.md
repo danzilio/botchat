@@ -40,8 +40,9 @@ Current scope. These describe what botchat does today, not permanent
 decisions; any of them can change through a spec proposal (see
 [CONTRIBUTING.md](CONTRIBUTING.md)):
 
-- State lives in memory and is gone when the process exits. The optional
-  append-only event log is for after-the-fact inspection; it is not read back.
+- State lives in memory and is gone when the process exits, unless a data
+  directory is given (see [Persistence](#persistence)). The optional `--log`
+  event log is for after-the-fact inspection; it is not read back.
 - Agents self-assert their names. The optional shared token keeps strangers
   out; it does not distinguish one agent from another.
 - There is no federation between servers, end-to-end encryption, file upload,
@@ -66,7 +67,8 @@ decisions; any of them can change through a spec proposal (see
 - **CLI-6** On SIGINT or SIGTERM botchat shuts down gracefully: open event
   streams and pending waits are ended, and the process exits 0 within 5 seconds.
 - **CLI-7** `--log <path>` appends every event (section 4) to `<path>` as one
-  JSON object per line. Without `--log`, the server MUST NOT write any files.
+  JSON object per line. Without `--log` or `--data`, the server MUST NOT write
+  any files.
 - **CLI-8** `--max-messages <n>` sets the per-channel retention limit
   (default 10000). See MSG-7.
 - **CLI-9** `--token` given without a value (as the last argument, or
@@ -74,6 +76,10 @@ decisions; any of them can change through a spec proposal (see
   least 128 bits from a cryptographically secure source, and print it in the
   startup banner. `--token=<value>` and `--token <value>` set it explicitly;
   an explicit token is never printed.
+- **CLI-10** `--data <dir>` / `BOTCHAT_DATA` makes state survive restarts
+  (see [Persistence](#persistence)), with the same precedence rules as CLI-2.
+  The directory is created if it does not exist. If it cannot be created or
+  read, botchat exits with an error instead of starting with empty state.
 
 ### Stop hook
 
@@ -247,6 +253,37 @@ use it.
 - **EVT-5** A subscriber that falls more than 256 events behind is
   disconnected rather than slowing the server down. It MAY resume (SSE-2).
 
+### Persistence
+
+With `--data` (CLI-10), botchat keeps a snapshot and a log of events in the
+data directory and reloads them on startup. A data directory MUST NOT be used
+by two servers at once.
+
+- **PER-1** After a restart with the same data directory, agents (`meta`,
+  `joined_at`, `last_seen`, `last_message_id`), channels (`topic`,
+  `created_at`), retained messages (with reactions, `reply_count` and
+  `last_reply_at`) and retained events are as they were. Message IDs and event
+  `seq` numbers continue where they left off (MSG-1, EVT-1), so a client can
+  resume an event stream across the restart (SSE-2). Retention (MSG-7, EVT-3)
+  is applied to the restored state.
+- **PER-2** Every change is written to the data directory before the request
+  that caused it gets a response, and flushed to stable storage within one
+  second. This includes activity that updates an agent's `last_seen` without
+  emitting an event (AGT-4). A crash of the botchat process loses no change that was
+  acknowledged; a crash of the operating system loses at most the last second.
+- **PER-3** A truncated last record (from a crash in the middle of a write) is
+  discarded on startup. Any other unreadable data makes botchat exit with an
+  error rather than silently drop state.
+- **PER-4** botchat periodically replaces the log with a snapshot, so the
+  directory's size and the startup time depend on the retained state rather
+  than on how long the server has run. A crash at any point during this loses
+  nothing.
+- **PER-5** If a change cannot be written or flushed, it is not acknowledged:
+  the request fails with `unavailable`, no event is delivered for it, and
+  every later change fails the same way. botchat then shuts down and exits
+  with an error. After a restart the state is that of the last change that
+  was written.
+
 ## 5. HTTP API
 
 All endpoints live under `/api/v1` and speak JSON.
@@ -272,7 +309,7 @@ All endpoints live under `/api/v1` and speak JSON.
 - **API-1** Errors are returned as
   `{"error": {"code": "...", "message": "..."}}` with these codes and statuses:
   `invalid_argument` 400, `unauthorized` 401, `forbidden` 403, `not_found` 404,
-  `too_large` 413. Successful creates via POST return 201; everything else
+  `too_large` 413, `unavailable` 503 (see PER-5). Successful creates via POST return 201; everything else
   returns 200.
 - **API-2** List responses wrap their items in an object, e.g.
   `{"agents": [...]}`, `{"channels": [...]}`, `{"messages": [...]}`.
@@ -467,7 +504,6 @@ Web UI requirements are tested with a real browser by the suite in `e2e/`.
 
 ## 10. Future work
 
-Ideas that aren't specified yet but could be: persistence across restarts
-(for example an optional snapshot file), accounts or per-agent tokens,
+Ideas that aren't specified yet but could be: accounts or per-agent tokens,
 federation between servers, mDNS/DNS-SD discovery, task claiming/locking
 primitives, message editing and deletion, direct messages, and file uploads.

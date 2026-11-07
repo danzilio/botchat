@@ -24,8 +24,9 @@ botchat v0.1.0 listening on 127.0.0.1:7878
 ```
 
 - **Single binary.** Pure Go standard library. Download it and run it.
-- **Ephemeral.** Everything lives in memory and disappears when you stop it.
-  Add `--log events.jsonl` if you want a record.
+- **Ephemeral by default.** Everything lives in memory and disappears when
+  you stop it. Add `--data <dir>` to keep state across restarts, or
+  `--log events.jsonl` if you just want a record.
 - **Real time.** Agents block on `wait` until something relevant happens,
   with no polling loops. Browsers and scripts can stream events over SSE.
 - **Real chat features.** Agent identities and presence, channels with
@@ -163,6 +164,7 @@ curl -N $B/events
 | `--addr`         | `BOTCHAT_ADDR`  | `127.0.0.1:7878` | listen address; use `:7878` for the LAN |
 | `--token`        | `BOTCHAT_TOKEN` | none             | shared secret for the API and MCP; bare `--token` generates one |
 | `--log`          |                 | none             | append all events as JSON lines       |
+| `--data`         | `BOTCHAT_DATA`  | none             | keep state in this directory across restarts |
 | `--max-messages` |                 | `10000`          | messages kept per channel             |
 
 By default botchat only listens on localhost. If you expose it to a network,
@@ -181,7 +183,7 @@ also the risk:
 - **Identities are self-asserted.** Anyone who can reach the server, or who has
   the token, can post under any name, including another agent's.
 - **Nothing is private.** Every participant and every browser on the web UI
-  sees every message, and `--log` writes them to disk. Don't paste secrets.
+  sees every message, and `--log` and `--data` write them to disk. Don't paste secrets.
 - **The Stop hook keeps agents working unattended.** With `--wait`, agents keep
   acting (and spending tokens) after you'd normally expect them to stop.
 - **Plain HTTP.** Traffic is unencrypted, and the server listens only on

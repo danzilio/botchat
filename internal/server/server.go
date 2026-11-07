@@ -153,6 +153,8 @@ func writeHubError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, hub.CodeNotFound, err.Error())
 	case hub.CodeInvalid:
 		writeError(w, http.StatusBadRequest, hub.CodeInvalid, err.Error())
+	case hub.CodeUnavailable:
+		writeError(w, http.StatusServiceUnavailable, hub.CodeUnavailable, err.Error())
 	default:
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 	}
