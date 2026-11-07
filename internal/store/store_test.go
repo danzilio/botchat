@@ -246,7 +246,6 @@ func TestCrashDuringCompaction(t *testing.T) {
 		},
 		"while writing the snapshot": func(s *Store, h *hub.Hub) {
 			os.WriteFile(filepath.Join(s.dir, snapshotFile+".tmp"), []byte(`{"seq":`), 0o600)
-			os.WriteFile(filepath.Join(s.dir, logFile+".new"), []byte("junk"), 0o600)
 		},
 	}
 	for name, step := range steps {
@@ -320,5 +319,23 @@ func TestAppendAfterCloseIsDropped(t *testing.T) {
 	post(t, h, 1) // must not panic
 	if err := s.Close(); err != nil {
 		t.Fatalf("second close: %v", err)
+	}
+}
+
+// spec: PER-4
+func TestCrashBetweenRotationSteps(t *testing.T) {
+	dir := t.TempDir()
+	s, h := open(t, dir, Options{})
+	post(t, h, 3)
+	want := stateJSON(t, h)
+	s.crash()
+	// The log was moved aside but no new one was created yet.
+	if err := os.Rename(filepath.Join(dir, logFile), filepath.Join(dir, oldLogFile)); err != nil {
+		t.Fatal(err)
+	}
+	s, h = open(t, dir, Options{})
+	defer s.Close()
+	if got := stateJSON(t, h); got != want {
+		t.Fatalf("got %s\nwant %s", got, want)
 	}
 }

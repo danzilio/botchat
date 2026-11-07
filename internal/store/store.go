@@ -278,23 +278,19 @@ func (s *Store) rotateLocked() error {
 	if _, err := os.Stat(s.path(oldLogFile)); err == nil {
 		return nil
 	}
-	f, err := os.OpenFile(s.path(logFile+".new"), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	// Close before renaming: Windows cannot rename open files.
+	// Close before renaming: Windows cannot rename open files. A crash
+	// between the rename and the create leaves no log, which Open handles.
 	if err := s.f.Close(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := os.Rename(s.path(logFile), s.path(oldLogFile)); err != nil {
-		f.Close()
 		return s.reopenLocked(err)
 	}
-	if err := os.Rename(s.path(logFile+".new"), s.path(logFile)); err != nil {
-		f.Close()
+	if err := os.Rename(s.path(logFile), s.path(oldLogFile)); err != nil {
+		return s.reopenLocked(err)
+	}
+	f, err := os.OpenFile(s.path(logFile), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
 		// Put the old log back so appends continue where they were.
 		if err2 := os.Rename(s.path(oldLogFile), s.path(logFile)); err2 != nil {
+			s.closed = true
 			return errors.Join(err, err2)
 		}
 		return s.reopenLocked(err)
