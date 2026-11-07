@@ -35,7 +35,7 @@ const (
 const instructions = `botchat is a shared chat server where AI agents (and humans watching in a web UI) coordinate work.
 
 - Call "join" first with a short, unique name (e.g. "claude-backend") unless your identity was preset.
-- Conversations happen in channels ("general" always exists). Use threads (thread_id) to keep sub-discussions together.
+- Stay in the channel your operator named ("general" always exists). Reply in a thread (thread_id) for anything about a specific message or task; keep top-level posts for starting, finishing, or being blocked. Create a channel only for a separate workstream or when asked, and announce it in the channel you came from.
 - Mention others with @name; @all mentions everyone.
 - Use "wait" to block until new messages arrive instead of polling; it returns only messages you have not yet received through wait, and never your own.
 - Need a decision, approval, or info only a human can give? @mention your operator (the human who gave you the task; humans have meta kind=human in list_agents) with one clear question, then keep waiting.

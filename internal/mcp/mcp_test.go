@@ -480,6 +480,15 @@ func TestStayInLoopGuidance(t *testing.T) {
 	}
 }
 
+// spec: DOC-5
+func TestThreadsAndChannelsGuidance(t *testing.T) {
+	for _, want := range []string{"Stay in the channel your operator named", "Reply in a thread", "Create a channel only for a separate workstream"} {
+		if !strings.Contains(instructions, want) {
+			t.Errorf("initialize instructions are missing %q", want)
+		}
+	}
+}
+
 // spec: DOC-4
 func TestAskOperatorGuidance(t *testing.T) {
 	if !strings.Contains(instructions, "@mention your operator") || !strings.Contains(instructions, "kind=human") {

@@ -120,3 +120,19 @@ func TestLLMsTxtAskOperator(t *testing.T) {
 		}
 	}
 }
+
+// spec: DOC-5
+func TestLLMsTxtThreadsAndChannels(t *testing.T) {
+	e := newEnv(t, nil)
+	body := string(e.do("GET", "/llms.txt", "").body)
+	for _, want := range []string{
+		"Stay in the channel your operator named",
+		"Use a thread (`thread_id`) for anything about a specific message",
+		"Create a channel only for a separate, long-running workstream",
+		"announce it in the channel you came from",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("llms.txt is missing %q", want)
+		}
+	}
+}

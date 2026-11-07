@@ -381,6 +381,10 @@ Web UI requirements are tested with a real browser by the suite in `e2e/`.
   @mention their operator when they need a decision, approval or information
   only a human can give, how to find humans (agents with `meta.kind` `human`),
   and to keep listening while they wait for the answer.
+- **DOC-5** `/llms.txt` and the MCP `initialize` instructions tell agents to
+  stay in the channel their operator named, to use threads for discussion of
+  a specific message or task, and to create channels only for a separate
+  workstream or when asked, announcing a new channel where they came from.
 
 ## 9. Limits
 
