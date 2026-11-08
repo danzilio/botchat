@@ -13,22 +13,21 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/danzilio/botchat/internal/client"
 )
 
 // DefaultURL is the default botchat server URL (HOOK-1).
-const DefaultURL = "http://127.0.0.1:7878"
+const DefaultURL = client.DefaultURL
 
 const (
 	maxTextChars   = 2000
 	maxReasonChars = 16000
-	maxWaitPerCall = 120 * time.Second
 )
 
 // Config is the parsed command line of `botchat hook stop`.
@@ -45,14 +44,6 @@ type Config struct {
 type input struct {
 	SessionID      string `json:"session_id"`
 	StopHookActive bool   `json:"stop_hook_active"`
-}
-
-type message struct {
-	ID       uint64 `json:"id"`
-	Channel  string `json:"channel"`
-	ThreadID uint64 `json:"thread_id"`
-	From     string `json:"from"`
-	Text     string `json:"text"`
 }
 
 // Main runs `botchat hook <args>` and returns the exit code.
@@ -127,9 +118,9 @@ func Stop(ctx context.Context, cfg Config, stdin io.Reader) (string, error) {
 	if err := json.NewDecoder(io.LimitReader(stdin, 1<<20)).Decode(&in); err != nil {
 		return "", fmt.Errorf("invalid hook input on stdin: %w", err)
 	}
-	c := &client{cfg: cfg, http: &http.Client{}}
+	c := client.New(cfg.URL, cfg.Token)
 
-	cursor, err := c.lastMessageID(ctx)
+	cursor, err := c.LastMessageID(ctx, cfg.Agent)
 	if err != nil {
 		return "", err
 	}
@@ -138,7 +129,7 @@ func Stop(ctx context.Context, cfg Config, stdin io.Reader) (string, error) {
 		cursor = saved
 	}
 
-	msgs, err := c.wait(ctx, cursor)
+	msgs, err := wait(ctx, c, cfg, cursor)
 	if err != nil {
 		return "", err
 	}
@@ -150,68 +141,13 @@ func Stop(ctx context.Context, cfg Config, stdin io.Reader) (string, error) {
 	return string(out), nil
 }
 
-type client struct {
-	cfg  Config
-	http *http.Client
-}
-
-func (c *client) get(ctx context.Context, path string, q url.Values, v any) (int, error) {
-	u := c.cfg.URL + path
-	if len(q) > 0 {
-		u += "?" + q.Encode()
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return 0, err
-	}
-	if c.cfg.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
-	}
-	res, err := c.http.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("cannot reach botchat at %s: %w", c.cfg.URL, err)
-	}
-	defer res.Body.Close()
-	if res.StatusCode == http.StatusNotFound {
-		return res.StatusCode, nil
-	}
-	if res.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(res.Body, 512))
-		return res.StatusCode, fmt.Errorf("GET %s: %s: %s", path, res.Status, strings.TrimSpace(string(body)))
-	}
-	return res.StatusCode, json.NewDecoder(res.Body).Decode(v)
-}
-
-func (c *client) lastMessageID(ctx context.Context) (uint64, error) {
-	var a struct {
-		LastMessageID uint64 `json:"last_message_id"`
-	}
-	status, err := c.get(ctx, "/api/v1/agents/"+url.PathEscape(c.cfg.Agent), nil, &a)
-	if err != nil || status == http.StatusNotFound {
-		return 0, err
-	}
-	return a.LastMessageID, nil
-}
-
 // wait returns matching messages after cursor, long-polling for up to
 // cfg.Wait in chunks the server accepts.
-func (c *client) wait(ctx context.Context, cursor uint64) ([]message, error) {
-	deadline := time.Now().Add(c.cfg.Wait)
+func wait(ctx context.Context, c *client.Client, cfg Config, cursor uint64) ([]client.Message, error) {
+	deadline := time.Now().Add(cfg.Wait)
 	for {
-		remaining := time.Until(deadline)
-		q := url.Values{
-			"after":        {strconv.FormatUint(cursor, 10)},
-			"exclude_from": {c.cfg.Agent},
-			"agent":        {c.cfg.Agent},
-			"timeout":      {strconv.FormatFloat(max(0, min(remaining, maxWaitPerCall).Seconds()), 'f', 3, 64)},
-		}
-		if !c.cfg.All {
-			q.Set("mention", c.cfg.Agent)
-		}
-		var res struct {
-			Messages []message `json:"messages"`
-		}
-		if _, err := c.get(ctx, "/api/v1/wait", q, &res); err != nil {
+		res, err := c.Wait(ctx, client.WaitQuery{Agent: cfg.Agent, All: cfg.All, After: &cursor, Timeout: min(time.Until(deadline), client.PollTimeout)})
+		if err != nil {
 			return nil, err
 		}
 		if len(res.Messages) > 0 || time.Until(deadline) <= 0 {
@@ -220,7 +156,7 @@ func (c *client) wait(ctx context.Context, cursor uint64) ([]message, error) {
 	}
 }
 
-func reason(cfg Config, msgs []message) string {
+func reason(cfg Config, msgs []client.Message) string {
 	var b strings.Builder
 	kind := "messages that mention you"
 	if cfg.All {

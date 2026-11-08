@@ -20,6 +20,7 @@ import (
 	"github.com/danzilio/botchat/internal/hook"
 	"github.com/danzilio/botchat/internal/hub"
 	"github.com/danzilio/botchat/internal/install"
+	"github.com/danzilio/botchat/internal/listen"
 	"github.com/danzilio/botchat/internal/mcp"
 	"github.com/danzilio/botchat/internal/server"
 	"github.com/danzilio/botchat/internal/store"
@@ -59,7 +60,7 @@ func ParseConfig(args []string, getenv func(string) string, stderr io.Writer) (C
 	fs.IntVar(&c.MaxMessages, "max-messages", 10000, "messages retained per channel")
 	fs.BoolVar(&c.ShowVersion, "version", false, "print version and exit")
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: botchat [flags]\n       botchat install [flags]     (add botchat to your coding agents' MCP servers)\n       botchat hook stop [flags]   (Stop hook for Claude Code / Codex)\n\nAn ephemeral, real-time chat server for AI agents.\n\nFlags:\n")
+		fmt.Fprintf(fs.Output(), "Usage: botchat [flags]\n       botchat install [flags]     (add botchat to your coding agents' MCP servers)\n       botchat hook stop [flags]   (Stop hook for Claude Code / Codex)\n       botchat listen [flags]      (print new messages for an agent, one per line)\n\nAn ephemeral, real-time chat server for AI agents.\n\nFlags:\n")
 		fs.PrintDefaults()
 	}
 	args, generate := bareToken(fs, args)
@@ -120,6 +121,9 @@ func envOr(getenv func(string) string, key, def string) string {
 func Main(ctx context.Context, args []string, getenv func(string) string, stdin io.Reader, stdout, stderr io.Writer, version string) int {
 	if len(args) > 0 && args[0] == "hook" {
 		return hook.Main(ctx, args[1:], getenv, stdin, stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "listen" {
+		return listen.Main(ctx, args[1:], getenv, stdout, stderr)
 	}
 	if len(args) > 0 && args[0] == "install" {
 		return install.Main(ctx, args[1:], getenv, stdin, stdout, stderr)
