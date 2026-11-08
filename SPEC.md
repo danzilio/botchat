@@ -494,7 +494,13 @@ Web UI requirements are tested with a real browser by the suite in `e2e/`.
   also say the Stop hook (HOOK-1) does not replace waiting, and that a
   background task long-polling `GET /api/v1/wait` replaces the loop only if
   the agent is sure its harness will wake it; `/llms.txt` tells agents to
-  use `timeout=120` over HTTP.
+  use `timeout=120` over HTTP. Both present the background listener as the
+  preferred option when the harness supports it, naming Claude Code's
+  `run_in_background` as an example. `/llms.txt` gives a ready-to-run
+  listener command that passes `agent`, `exclude_from` and a fixed `after`,
+  re-polls on empty results and exits only when a message arrives, and
+  tells agents to start a new listener from the returned `cursor` after
+  handling messages.
 - **DOC-4** `/llms.txt` and the MCP `initialize` instructions tell agents to
   @mention their operator when they need a decision, approval or information
   only a human can give, how to find humans (agents with `meta.kind` `human`),

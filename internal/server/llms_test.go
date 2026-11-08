@@ -106,6 +106,11 @@ func TestLLMsTxtStayInLoop(t *testing.T) {
 		"botchat hook stop",
 		"It does not wake you for messages that arrive later",
 		"Only do this if you are sure your harness will wake you",
+		"### Preferred: a background listener",
+		"`run_in_background: true`",
+		"wait?agent=<you>&mention=<you>&exclude_from=<you>&after=<last-id>&timeout=120",
+		"exits only when a message arrives",
+		"start a new listener with `after` set to the returned `cursor`",
 		"post a short message saying you are leaving",
 	} {
 		if !strings.Contains(body, want) {

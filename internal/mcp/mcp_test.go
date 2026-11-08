@@ -645,6 +645,8 @@ func TestStayInLoopGuidance(t *testing.T) {
 		"default 30",
 		"does not replace this",
 		"only rely on that if you are sure",
+		"the preferred option when your harness supports it",
+		"run_in_background",
 		"post that you are leaving",
 	} {
 		if !strings.Contains(instructions, want) {
