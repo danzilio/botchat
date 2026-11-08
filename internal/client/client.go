@@ -21,6 +21,12 @@ const DefaultURL = "http://127.0.0.1:7878"
 // MaxWait is the longest timeout the server accepts for one wait (API-7).
 const MaxWait = 120 * time.Second
 
+// PollTimeout is the timeout helpers use for each long poll that should keep
+// an agent online. The server marks the agent active only when a request
+// starts, and presence lasts 60 seconds (AGT-4), so it must be shorter than
+// that. A variable so tests can shorten it.
+var PollTimeout = 45 * time.Second
+
 // Message is the subset of a botchat message the helpers use.
 type Message struct {
 	ID       uint64 `json:"id"`

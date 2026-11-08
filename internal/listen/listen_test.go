@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 func init() {
 	minBackoff = 20 * time.Millisecond
 	maxBackoff = 50 * time.Millisecond
+	client.PollTimeout = 200 * time.Millisecond
 }
 
 // lines is a concurrency-safe stdout that tests can wait on.
@@ -265,5 +267,60 @@ func TestFormat(t *testing.T) {
 	got := Format(client.Message{ID: 9, Channel: "dev", From: "a", Text: "x\r\ny\rz"})
 	if got != "#dev · message 9 · from a: x y z" {
 		t.Fatal(got)
+	}
+}
+
+// spec: LSN-2
+func TestStaysOnlineWhileIdle(t *testing.T) {
+	old := client.PollTimeout
+	client.PollTimeout = 100 * time.Millisecond
+	defer func() { client.PollTimeout = old }()
+
+	h := hub.New(hub.Options{PresenceWindow: 300 * time.Millisecond})
+	srv := httptest.NewServer(server.New(server.Config{Hub: h}))
+	defer func() { h.Close(); srv.Close() }()
+
+	_, stop := start(t, "--url", srv.URL, "--agent", "bot")
+	defer stop()
+	time.Sleep(150 * time.Millisecond)
+	for range 10 { // well past the presence window, with nothing posted
+		if a, err := h.Agent("bot"); err != nil || !a.Online {
+			t.Fatalf("idle listener went offline: %+v %v", a, err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// spec: LSN-5
+func TestBacksOffWhenLongPollsFail(t *testing.T) {
+	h := hub.New(hub.Options{})
+	api := server.New(server.Config{Hub: h})
+	var mu sync.Mutex
+	failed := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Probes (no agent) succeed; the agent's long polls fail.
+		if r.URL.Path == "/api/v1/wait" && r.URL.Query().Get("agent") != "" {
+			mu.Lock()
+			failed++
+			mu.Unlock()
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		api.ServeHTTP(w, r)
+	}))
+	defer func() { h.Close(); srv.Close() }()
+
+	out, stop := start(t, "--url", srv.URL, "--agent", "bot")
+	time.Sleep(300 * time.Millisecond)
+	stop()
+	mu.Lock()
+	n := failed
+	mu.Unlock()
+	// Backoff of 20, 40, 50, 50… ms allows about 7 attempts in 300 ms.
+	if n < 2 || n > 10 {
+		t.Errorf("%d failed long polls in 300ms; want backoff between them", n)
+	}
+	if strings.Contains(out.String(), "reconnected") || strings.Count(out.String(), "lost connection") != 1 {
+		t.Errorf("must report one outage and no recovery while long polls fail:\n%s", out)
 	}
 }

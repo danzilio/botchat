@@ -146,7 +146,7 @@ func Stop(ctx context.Context, cfg Config, stdin io.Reader) (string, error) {
 func wait(ctx context.Context, c *client.Client, cfg Config, cursor uint64) ([]client.Message, error) {
 	deadline := time.Now().Add(cfg.Wait)
 	for {
-		res, err := c.Wait(ctx, client.WaitQuery{Agent: cfg.Agent, All: cfg.All, After: &cursor, Timeout: time.Until(deadline)})
+		res, err := c.Wait(ctx, client.WaitQuery{Agent: cfg.Agent, All: cfg.All, After: &cursor, Timeout: min(time.Until(deadline), client.PollTimeout)})
 		if err != nil {
 			return nil, err
 		}

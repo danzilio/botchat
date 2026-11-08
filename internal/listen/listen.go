@@ -108,29 +108,10 @@ type listener struct {
 }
 
 func (l *listener) run(ctx context.Context) error {
-	// LSN-2: start after the agent's last post.
-	if err := l.retry(ctx, func() error {
-		id, err := l.c.LastMessageID(ctx, l.cfg.Agent)
-		l.cursor = id
-		return err
-	}); err != nil {
-		return ignoreCancel(ctx, err)
-	}
+	started := false
+	backoff := minBackoff
 	for {
-		// Check for a restart before every wait, so a wait never reaches a
-		// restarted server with a cursor it will not pass for a long time.
-		var res client.WaitResult
-		began := time.Now()
-		err := l.probe(ctx)
-		if err == nil {
-			cursor := l.cursor
-			res, err = l.c.Wait(ctx, client.WaitQuery{Agent: l.cfg.Agent, All: l.cfg.All, After: &cursor, Timeout: client.MaxWait})
-		}
-		if err == nil && len(res.Messages) == 0 && time.Since(began) < minBackoff {
-			// A server shutting down ends waits early with nothing; don't
-			// spin on it.
-			sleep(ctx, minBackoff)
-		}
+		res, err := l.attempt(ctx, &started)
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -138,10 +119,18 @@ func (l *listener) run(ctx context.Context) error {
 			if fatal(err) {
 				return err
 			}
-			if err := l.reconnect(ctx, err); err != nil {
-				return ignoreCancel(ctx, err)
-			}
+			// Back off across failed attempts, whichever request failed, so
+			// a server that answers probes but fails long polls is not
+			// hammered (LSN-5).
+			l.lost(err)
+			sleep(ctx, backoff)
+			backoff = min(2*backoff, maxBackoff)
 			continue
+		}
+		backoff = minBackoff
+		if l.down {
+			l.down = false
+			fmt.Fprintf(l.out, "botchat: reconnected to %s\n", l.cfg.URL)
 		}
 		for _, m := range res.Messages {
 			fmt.Fprintln(l.out, Format(m))
@@ -154,12 +143,32 @@ func (l *listener) run(ctx context.Context) error {
 	}
 }
 
-// reconnect reports the outage, then retries until the server answers. If the
-// server restarted with fewer messages than the cursor, it starts again from 0
-// (LSN-5).
-func (l *listener) reconnect(ctx context.Context, cause error) error {
-	l.lost(cause)
-	return l.retry(ctx, func() error { return l.probe(ctx) })
+// attempt makes one round: until it has succeeded once it reads the agent's
+// last post (LSN-2); every round checks for a server restart and then
+// long-polls. A round only succeeds if the long poll succeeds.
+func (l *listener) attempt(ctx context.Context, started *bool) (client.WaitResult, error) {
+	if !*started {
+		id, err := l.c.LastMessageID(ctx, l.cfg.Agent)
+		if err != nil {
+			return client.WaitResult{}, err
+		}
+		l.cursor, *started = id, true
+	}
+	// Check for a restart before every wait, so a wait never reaches a
+	// restarted server with a cursor it will not pass for a long time.
+	if err := l.probe(ctx); err != nil {
+		return client.WaitResult{}, err
+	}
+	began := time.Now()
+	cursor := l.cursor
+	// Poll for less than the presence window so the agent stays online
+	// throughout (LSN-2, AGT-4): the server marks it active per request.
+	res, err := l.c.Wait(ctx, client.WaitQuery{Agent: l.cfg.Agent, All: l.cfg.All, After: &cursor, Timeout: client.PollTimeout})
+	if err == nil && len(res.Messages) == 0 && time.Since(began) < minBackoff {
+		// A server shutting down ends waits early with nothing; don't spin.
+		sleep(ctx, minBackoff)
+	}
+	return res, err
 }
 
 // probe asks for the server's latest message ID and starts again from 0 if
@@ -180,34 +189,6 @@ func sleep(ctx context.Context, d time.Duration) {
 	}
 }
 
-// retry runs fn until it succeeds, backing off between attempts. It returns
-// fn's error only if it is fatal, or ctx's error if cancelled.
-func (l *listener) retry(ctx context.Context, fn func() error) error {
-	wait := minBackoff
-	for {
-		err := fn()
-		if err == nil {
-			if l.down {
-				l.down = false
-				fmt.Fprintf(l.out, "botchat: reconnected to %s\n", l.cfg.URL)
-			}
-			return nil
-		}
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if fatal(err) {
-			return err
-		}
-		l.lost(err)
-		sleep(ctx, wait)
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		wait = min(2*wait, maxBackoff)
-	}
-}
-
 func (l *listener) lost(err error) {
 	if !l.down {
 		l.down = true
@@ -218,13 +199,6 @@ func (l *listener) lost(err error) {
 func fatal(err error) bool {
 	var se *client.StatusError
 	return errors.As(err, &se) && (se.Code == http.StatusUnauthorized || se.Code == http.StatusForbidden)
-}
-
-func ignoreCancel(ctx context.Context, err error) error {
-	if ctx.Err() != nil {
-		return nil
-	}
-	return err
 }
 
 var newlines = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ")
