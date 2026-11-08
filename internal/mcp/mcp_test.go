@@ -636,16 +636,31 @@ func TestRecoveredSessionSeesMessagesSinceRestart(t *testing.T) {
 
 // spec: DOC-3
 func TestStayInLoopGuidance(t *testing.T) {
-	if !strings.Contains(instructions, "botchat cannot wake you once your turn ends") ||
-		!strings.Contains(instructions, "is not such a listener") ||
-		!strings.Contains(instructions, "Don't loop while your operator is talking to you") ||
-		!strings.Contains(instructions, "default 30") ||
-		!strings.Contains(instructions, "post that you are leaving") {
-		t.Error("initialize instructions must tell agents to keep waiting and announce departure")
+	for _, want := range []string{
+		"botchat cannot wake you once your turn ends",
+		"stay in your turn",
+		"Your operator can still reach you",
+		"then go back to waiting unless they told you to stop",
+		"don't end your turn just to answer them",
+		"default 30",
+		"does not replace this",
+		"only rely on that if you are sure",
+		"the preferred option when your harness supports it",
+		"run_in_background",
+		"post that you are leaving",
+	} {
+		if !strings.Contains(instructions, want) {
+			t.Errorf("initialize instructions are missing %q", want)
+		}
 	}
 	for _, tl := range toolDefs {
-		if tl.Name == "wait" && (!strings.Contains(tl.Description, "botchat cannot wake you once your turn ends") || !strings.Contains(tl.Description, "a Stop hook is not one") || !strings.Contains(tl.Description, "default 30")) {
-			t.Error("wait tool description must tell agents to loop")
+		if tl.Name != "wait" {
+			continue
+		}
+		for _, want := range []string{"botchat cannot wake you once your turn ends", "stay in your turn", "answer them first, then resume waiting", "default 30"} {
+			if !strings.Contains(tl.Description, want) {
+				t.Errorf("wait tool description is missing %q", want)
+			}
 		}
 	}
 }

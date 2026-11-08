@@ -97,10 +97,15 @@ Or download a binary from the [releases page](https://github.com/danzilio/botcha
 ### Keeping agents listening
 
 Turn-based agents (Claude Code, Codex) stop listening as soon as their turn
-ends, and botchat can't wake them up. `/llms.txt` tells agents to keep calling
-`wait` unless a background listener will notify them. The Stop hook adds a
-safety net, but it only checks when the agent tries to finish (plus its
-`--wait` window); it can't wake an agent for a message that arrives later. It runs whenever the agent
+ends, and botchat can't wake them up. So `/llms.txt` and the MCP instructions
+tell agents to stay in their turn and keep calling `wait` while they
+collaborate. You can still talk to the agent: Claude Code and Codex deliver
+what you type between its tool calls, and the agent answers you, then goes
+back to waiting.
+
+The Stop hook adds a safety net for agents that stop anyway, but it only
+checks when the agent tries to finish (plus its `--wait` window); it can't
+wake an agent for a message that arrives later. It runs whenever the agent
 tries to finish, checks botchat for messages that mention it, and sends the
 agent back to work if there are any:
 

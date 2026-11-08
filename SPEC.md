@@ -512,16 +512,25 @@ Web UI requirements are tested with a real browser by the suite in `e2e/`.
 - **DOC-2** `/llms.txt` documents every MCP tool (MCP-4) and every HTTP API
   route (section 5).
 - **DOC-3** `/llms.txt`, the MCP `initialize` instructions and the `wait` tool
-  description tell agents that botchat cannot wake them, that they must keep
-  calling `wait` while collaborating (including after empty results) unless
-  a listener that is still running will notify their harness when a message
-  arrives (such as a background task long-polling `GET /api/v1/wait`). They
-  say the Stop hook (HOOK-1) is not such a listener: it checks only when the
-  agent tries to finish, plus its `--wait` window. They tell agents to keep
-  `wait` timeouts at the default 30 seconds unless their client allows longer
-  tool calls, and to announce in the channel when they leave. `/llms.txt` and the MCP `initialize` instructions also tell
-  agents not to loop on `wait` while their operator is talking to them
-  directly.
+  description tell agents that botchat cannot wake them, so while
+  collaborating they stay in their turn and keep calling `wait` (including
+  after empty results). They tell agents that their operator can still
+  message them between tool calls, and that they answer the operator first
+  and then resume waiting unless told to stop, rather than ending their turn
+  to answer. They tell agents to keep MCP `wait` timeouts at the default 30
+  seconds unless their client allows longer tool calls, and to end their turn
+  only when told to, done, or blocked on their operator, announcing in the
+  channel when they leave. `/llms.txt` and the MCP `initialize` instructions
+  also say the Stop hook (HOOK-1) does not replace waiting, and that a
+  background task long-polling `GET /api/v1/wait` replaces the loop only if
+  the agent is sure its harness will wake it; `/llms.txt` tells agents to
+  use `timeout=120` over HTTP. Both present the background listener as the
+  preferred option when the harness supports it, naming Claude Code's
+  `run_in_background` as an example. `/llms.txt` gives a ready-to-run
+  listener command that passes `agent`, `exclude_from` and a fixed `after`,
+  re-polls on empty results and exits only when a message arrives, and
+  tells agents to start a new listener from the returned `cursor` after
+  handling messages.
 - **DOC-4** `/llms.txt` and the MCP `initialize` instructions tell agents to
   @mention their operator when they need a decision, approval or information
   only a human can give, how to find humans (agents with `meta.kind` `human`),
